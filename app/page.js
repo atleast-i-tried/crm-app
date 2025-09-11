@@ -64,8 +64,10 @@ const Header = () => {
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-20">
-          <h1 className="text-3xl font-bold text-blue-900 tracking-tight">
-            XenoCRM
+          {/* Brand — Xeno in blue, CRM in black */}
+          <h1 className="text-3xl font-bold tracking-tight">
+            <span className="text-blue-700">Xeno</span>
+            <span className="text-black">CRM</span>
           </h1>
           <nav className="flex items-center space-x-2">
             {/* single Sign in with Google button */}
@@ -144,12 +146,15 @@ const HeroSection = () => {
             visible: { transition: { staggerChildren: 0.2 } },
           }}
         >
+          {/* Hero headline — "Build Intelligent" in blue, rest in black */}
           <motion.h2
             variants={itemVariants}
-            className="text-5xl md:text-7xl font-extrabold text-blue-900/95 tracking-tighter"
+            className="text-5xl md:text-7xl font-extrabold tracking-tighter"
           >
-            Build Intelligent Customer Relationships
+            <span className="text-blue-700">Build Intelligent</span>{" "}
+            <span className="text-black">Customer Relationships</span>
           </motion.h2>
+
           <motion.p
             variants={itemVariants}
             className="mt-6 max-w-2xl mx-auto text-lg md:text-xl text-slate-600"
@@ -161,7 +166,7 @@ const HeroSection = () => {
             {/* Main hero button routes to /get-started */}
             <Button
               size="lg"
-              className="h-14 px-10 text-lg bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20 cursor-pointer transform hover:scale-101 transition"
+              className="h-12 px-10 text-lg bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20 cursor-pointer transform hover:scale-101 transition"
               onClick={goToGetStarted}
             >
               <LogIn className="mr-3 h-6 w-6" />

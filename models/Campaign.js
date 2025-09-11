@@ -1,14 +1,15 @@
 import mongoose from "mongoose";
 
-const CampaignSchema = new mongoose.Schema(
+const campaignSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },   // e.g., "Win-back High Spenders"
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    filters: { type: Object, required: true }, // e.g. { spend: ">10000", inactiveDays: ">90" }
-    message: { type: String, required: true }, // campaign message
+    name: { type: String, required: true },
+    createdBy: { type: String, required: true }, // Changed type to String to match frontend
+    filters: { type: Object, required: true },
+    message: { type: String, required: true },
+    objective: { type: String }, // Added objective field
     status: { type: String, enum: ["PENDING", "SENT"], default: "PENDING" },
   },
   { timestamps: true }
 );
 
-export default mongoose.models.Campaign || mongoose.model("Campaign", CampaignSchema);
+export default mongoose.models.Campaign || mongoose.model("Campaign", campaignSchema);

@@ -7,7 +7,7 @@ import CampaignLog from "@/models/CampaignLog";
 export async function GET() {
   try {
     await connectDB();
-    const campaigns = await Campaign.find({}).populate("createdBy");
+    const campaigns = await Campaign.find({});
     return new Response(JSON.stringify(campaigns), { status: 200 });
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
@@ -43,7 +43,7 @@ export async function POST(req) {
 
     const targetCustomers = await Customer.find(query);
 
-    // 3️⃣ Create logs for each matched customer
+    // 3️⃣ Corrected: Create logs for each matched customer and wait for all to resolve
     const logs = await Promise.all(
       targetCustomers.map((cust) =>
         CampaignLog.create({
