@@ -44,7 +44,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { EllipsisVertical } from "lucide-react";
+import { EllipsisVertical, X } from "lucide-react";
 
 export default function CampaignsPage() {
   const { data: session, status } = useSession();
@@ -53,37 +53,67 @@ export default function CampaignsPage() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [selectedCampaign, setSelectedCampaign] = useState(null); // New state for selected campaign
   const [newCampaign, setNewCampaign] = useState({
     name: "",
     message: "",
     objective: "",
-    filters: {
-      minSpend: 0,
-      inactiveDays: 0,
-    },
+    filters: [], // Array of filter rules
+    logic: "AND", // "AND" or "OR"
   });
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [audienceSize, setAudienceSize] = useState(0);
 
-  const applyFilters = (customerList, filters) => {
-    const { minSpend, inactiveDays } = filters;
+  const filterOptions = [
+    { label: "Min. Spend", key: "minSpend" },
+    { label: "Min. Visits", key: "minVisits" },
+    { label: "Inactive Days", key: "inactiveDays" },
+  ];
+
+  const applyFilters = (customerList, filters, logic) => {
+    if (filters.length === 0) return customerList;
+
     return customerList.filter((c) => {
-      const spendMatch = c.totalSpend >= minSpend;
-      const inactiveMatch =
-        inactiveDays === 0 ||
-        (c.lastActive &&
-          (new Date() - new Date(c.lastActive)) / (1000 * 60 * 60 * 24) >=
-            inactiveDays);
-      return spendMatch && inactiveMatch;
+      const results = filters.map((f) => {
+        switch (f.key) {
+          case "minSpend":
+            return c.totalSpend >= f.value;
+          case "minVisits":
+            return c.visits >= f.value;
+          case "inactiveDays":
+            if (f.value === 0) return true;
+            return c.lastActive && (new Date() - new Date(c.lastActive)) / (1000 * 60 * 60 * 24) >= f.value;
+          default:
+            return true;
+        }
+      });
+      return logic === "AND" ? results.every(Boolean) : results.some(Boolean);
     });
   };
 
-  const handleFilterChange = (key, value) => {
-    const updatedFilters = { ...newCampaign.filters, [key]: value };
+  const handleFilterChange = (index, key, value) => {
+    const updatedFilters = [...newCampaign.filters];
+    updatedFilters[index] = { ...updatedFilters[index], key, value };
     setNewCampaign({ ...newCampaign, filters: updatedFilters });
-    const filtered = applyFilters(customers, updatedFilters);
-    setAudienceSize(filtered.length);
+  };
+  
+  const handleLogicChange = (logic) => {
+    setNewCampaign({ ...newCampaign, logic });
+  };
+  
+  const handleAddFilter = () => {
+    if (newCampaign.filters.length < 3) {
+      setNewCampaign({
+        ...newCampaign,
+        filters: [...newCampaign.filters, { key: "minSpend", value: 0 }],
+      });
+    }
+  };
+  
+  const handleRemoveFilter = (index) => {
+    const updatedFilters = newCampaign.filters.filter((_, i) => i !== index);
+    setNewCampaign({ ...newCampaign, filters: updatedFilters });
   };
 
   const fetchAllData = async () => {
@@ -105,8 +135,7 @@ export default function CampaignsPage() {
       setCampaigns(campaignsData);
       setCustomers(customersData);
       setLogs(logsData);
-      // Fix: Call handleFilterChange after customers data is set
-      const initialAudience = applyFilters(customersData, newCampaign.filters);
+      const initialAudience = applyFilters(customersData, newCampaign.filters, newCampaign.logic);
       setAudienceSize(initialAudience.length);
     } catch (error) {
       toast.error("An error occurred while fetching data.");
@@ -121,6 +150,11 @@ export default function CampaignsPage() {
       fetchAllData();
     }
   }, [status]);
+
+  useEffect(() => {
+    const filtered = applyFilters(customers, newCampaign.filters, newCampaign.logic);
+    setAudienceSize(filtered.length);
+  }, [customers, newCampaign.filters, newCampaign.logic]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -154,7 +188,8 @@ export default function CampaignsPage() {
         name: "",
         message: "",
         objective: "",
-        filters: { minSpend: 0, inactiveDays: 0 },
+        filters: [],
+        logic: "AND",
       });
       setAudienceSize(0);
       toast.success("Campaign launched successfully!");
@@ -261,7 +296,7 @@ export default function CampaignsPage() {
           <DialogTrigger asChild>
             <Button>+ Create New Campaign</Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-xl">
+          <DialogContent className="sm:max-w-xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create Campaign</DialogTitle>
               <DialogDescription>
@@ -285,35 +320,64 @@ export default function CampaignsPage() {
 
               {/* Dynamic Rule Builder Section */}
               <div className="space-y-4">
-                <h4 className="text-sm font-semibold text-gray-500">Audience Filters</h4>
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="minSpend" className="text-right">
-                    Min. Spend: ₹{newCampaign.filters.minSpend}
-                  </Label>
-                  <Slider
-                    id="minSpend"
-                    value={[newCampaign.filters.minSpend]}
-                    onValueChange={(value) => handleFilterChange("minSpend", value[0])}
-                    min={0}
-                    max={10000}
-                    step={100}
-                    className="col-span-3"
-                  />
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-gray-500">Audience Filters</h4>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">Logic:</span>
+                    <Button
+                      type="button"
+                      variant={newCampaign.logic === "AND" ? "default" : "outline"}
+                      onClick={() => handleLogicChange("AND")}
+                      size="sm"
+                    >
+                      AND
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={newCampaign.logic === "OR" ? "default" : "outline"}
+                      onClick={() => handleLogicChange("OR")}
+                      size="sm"
+                    >
+                      OR
+                    </Button>
+                  </div>
                 </div>
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="inactiveDays" className="text-right">
-                    Inactive Days: {newCampaign.filters.inactiveDays}
-                  </Label>
-                  <Slider
-                    id="inactiveDays"
-                    value={[newCampaign.filters.inactiveDays]}
-                    onValueChange={(value) => handleFilterChange("inactiveDays", value[0])}
-                    min={0}
-                    max={365}
-                    step={1}
-                    className="col-span-3"
-                  />
-                </div>
+                
+                {newCampaign.filters.map((filter, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <select
+                      value={filter.key}
+                      onChange={(e) => handleFilterChange(index, e.target.value, filter.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {filterOptions.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <Input
+                      type="number"
+                      value={filter.value}
+                      onChange={(e) => handleFilterChange(index, filter.key, Number(e.target.value))}
+                      className="w-full"
+                    />
+                    <Button type="button" variant="destructive" size="icon" onClick={() => handleRemoveFilter(index)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  className="w-full" 
+                  onClick={handleAddFilter}
+                  disabled={newCampaign.filters.length >= 3}
+                >
+                  + Add Filter
+                </Button>
+                
                 <div className="text-center text-sm font-medium mt-2">
                   Audience Size: <Badge variant="secondary">{audienceSize}</Badge>
                 </div>
@@ -407,7 +471,7 @@ export default function CampaignsPage() {
               .map((c) => {
                 const stats = campaignStats.find((s) => s._id === c._id);
                 return (
-                  <TableRow key={c._id}>
+                  <TableRow key={c._id} className="cursor-pointer hover:bg-gray-100/50" onClick={() => setSelectedCampaign(stats)}>
                     <TableCell className="font-medium">{c.name}</TableCell>
                     <TableCell>{c.createdBy}</TableCell>
                     <TableCell>{stats?.audienceSize || 0}</TableCell>
@@ -467,6 +531,48 @@ export default function CampaignsPage() {
           No campaigns found. Create your first campaign to get started.
         </div>
       )}
+
+      {/* Campaign Details Dialog */}
+      <Dialog open={!!selectedCampaign} onOpenChange={() => setSelectedCampaign(null)}>
+        {selectedCampaign && (
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>{selectedCampaign.name}</DialogTitle>
+              <DialogDescription>
+                Details for this campaign.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 items-center gap-4">
+                <p className="text-sm font-medium">Created By:</p>
+                <p className="text-sm text-gray-500">{selectedCampaign.createdBy}</p>
+              </div>
+              <Separator />
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Filters ({selectedCampaign.logic}):</p>
+                {selectedCampaign.filters.length > 0 ? (
+                  <ul className="list-disc list-inside space-y-1 text-sm text-gray-500">
+                    {selectedCampaign.filters.map((filter, index) => (
+                      <li key={index}>
+                        {filter.key === "minSpend" && `Min. Spend: ₹${filter.value}`}
+                        {filter.key === "minVisits" && `Min. Visits: ${filter.value}`}
+                        {filter.key === "inactiveDays" && `Inactive for ${filter.value} days`}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-gray-500">No filters applied.</p>
+                )}
+              </div>
+              <Separator />
+              <div className="grid gap-2">
+                <p className="text-sm font-medium">Message:</p>
+                <p className="text-sm text-gray-500">{selectedCampaign.message}</p>
+              </div>
+            </div>
+          </DialogContent>
+        )}
+      </Dialog>
     </div>
   );
 }
