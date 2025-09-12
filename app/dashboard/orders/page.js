@@ -22,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  // Select removed (we're using Command instead)
   Select,
   SelectContent,
   SelectGroup,
@@ -46,6 +47,16 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
+
+// Command (searchable list) from shadcn/ui
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 
 export default function OrdersPage() {
   const { status } = useSession();
@@ -149,6 +160,12 @@ export default function OrdersPage() {
     return filteredOrders.slice(startIndex, endIndex);
   }, [filteredOrders, currentPage]);
 
+  // helper: get selected customer object for display
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => c._id === newOrder.customerId) || null,
+    [customers, newOrder.customerId]
+  );
+
   if (status === "loading") {
     return (
       <div className="p-6 max-w-7xl mx-auto">
@@ -192,36 +209,53 @@ export default function OrdersPage() {
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Add Order</DialogTitle>
-              <DialogDescription>
-                Fill in the details to add a new order.
-              </DialogDescription>
+              <DialogDescription>Fill in the details to add a new order.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleAddOrder} className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="customer" className="text-right">
                   Customer
                 </Label>
-                <Select
-                  onValueChange={(value) =>
-                    setNewOrder({ ...newOrder, customerId: value })
-                  }
-                  required
-                >
-                  <SelectTrigger className="col-span-3">
-                    <SelectValue placeholder="Select a customer" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectLabel>Customers</SelectLabel>
-                      {customers.map((c) => (
-                        <SelectItem key={c._id} value={c._id}>
-                          {c.name} ({c.email})
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+
+                {/* Searchable Command (type-to-search) */}
+                <div className="col-span-3">
+                  <Command>
+                    <CommandInput placeholder="Search customer by name or email..." />
+                    <CommandList>
+                      <CommandEmpty>No customer found.</CommandEmpty>
+                      <CommandGroup>
+                        {customers.map((c) => (
+                          <CommandItem
+                            key={c._id}
+                            value={c._id}
+                            onSelect={(value) => {
+                              // Command passes value as string
+                              setNewOrder({ ...newOrder, customerId: value });
+                            }}
+                          >
+                            <div className="flex items-center justify-between w-full">
+                              <div>
+                                <div className="font-medium">{c.name}</div>
+                                <div className="text-xs text-muted-foreground">{c.email}</div>
+                              </div>
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+
+                  {/* small helper showing currently selected customer */}
+                  {selectedCustomer ? (
+                    <div className="mt-2 text-sm text-slate-600">
+                      Selected: <span className="font-medium">{selectedCustomer.name}</span> ({selectedCustomer.email})
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-sm text-slate-400">No customer selected yet.</div>
+                  )}
+                </div>
               </div>
+
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="amount" className="text-right">
                   Amount
@@ -236,6 +270,7 @@ export default function OrdersPage() {
                   className="col-span-3"
                 />
               </div>
+
               <Button type="submit">Save Order</Button>
             </form>
           </DialogContent>
@@ -267,12 +302,7 @@ export default function OrdersPage() {
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-64">
-            <Input
-              placeholder="Filter status..."
-              name="status"
-              value={filters.status}
-              onChange={handleFilterChange}
-            />
+            <Input placeholder="Filter status..." name="status" value={filters.status} onChange={handleFilterChange} />
           </PopoverContent>
         </Popover>
       </div>
@@ -295,68 +325,52 @@ export default function OrdersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {currentOrders.map((o) => (
-                <TableRow key={o._id}>
-                  <TableCell className="font-medium">
-                    {o.customer?.name || "Unknown"}
-                  </TableCell>
-                  <TableCell>₹{o.amount}</TableCell>
-                  <TableCell>
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                        o.status === "SENT"
-                          ? "bg-green-100 text-green-800"
-                          : o.status === "FAILED"
-                          ? "bg-red-100 text-red-800"
-                          : "bg-yellow-100 text-yellow-800"
-                      }`}
-                    >
-                      {o.status}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    {new Date(o.createdAt).toLocaleDateString()}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {currentOrders.map((o) => {
+                // treat PENDING same as success (green)
+                const isSuccess = o.status === "SENT" || o.status === "PENDING";
+                const statusClass = isSuccess
+                  ? "bg-green-100 text-green-800"
+                  : o.status === "FAILED"
+                  ? "bg-red-100 text-red-800"
+                  : "bg-yellow-100 text-yellow-800";
+                return (
+                  <TableRow key={o._id}>
+                    <TableCell className="font-medium">{o.customer?.name || "Unknown"}</TableCell>
+                    <TableCell>₹{o.amount}</TableCell>
+                    <TableCell>
+                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${statusClass}`}>{o.status}</span>
+                    </TableCell>
+                    <TableCell>{new Date(o.createdAt).toLocaleDateString()}</TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
+
           <div className="mt-6 flex justify-center">
             <Pagination>
               <PaginationContent>
                 <PaginationItem>
                   <PaginationPrevious
                     href="#"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.max(prev - 1, 1))
-                    }
-                    className={
-                      currentPage === 1 ? "pointer-events-none opacity-50" : ""
-                    }
+                    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                    className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
                   />
                 </PaginationItem>
+
                 {Array.from({ length: totalPages }, (_, i) => (
                   <PaginationItem key={i}>
-                    <PaginationLink
-                      href="#"
-                      onClick={() => setCurrentPage(i + 1)}
-                      isActive={i + 1 === currentPage}
-                    >
+                    <PaginationLink href="#" onClick={() => setCurrentPage(i + 1)} isActive={i + 1 === currentPage}>
                       {i + 1}
                     </PaginationLink>
                   </PaginationItem>
                 ))}
+
                 <PaginationItem>
                   <PaginationNext
                     href="#"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.min(prev + 1, totalPages))
-                    }
-                    className={
-                      currentPage === totalPages
-                        ? "pointer-events-none opacity-50"
-                        : ""
-                    }
+                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                    className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""}
                   />
                 </PaginationItem>
               </PaginationContent>
@@ -364,9 +378,7 @@ export default function OrdersPage() {
           </div>
         </>
       ) : (
-        <div className="text-center text-gray-500 py-10">
-          No orders found. Add a new order to get started.
-        </div>
+        <div className="text-center text-gray-500 py-10">No orders found. Add a new order to get started.</div>
       )}
     </div>
   );
