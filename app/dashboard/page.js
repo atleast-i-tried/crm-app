@@ -18,25 +18,28 @@ import {
   Legend,
   CartesianGrid,
 } from "recharts";
-import { Users, ShoppingCart, Mail } from "lucide-react";
+import { Users, ShoppingCart, Mail, Trophy } from "lucide-react";
 import { toast } from "sonner";
 
 /**
- * Stylish DashboardHome
- * - I preserved ALL content and colors.
- * - Only visual/styling changes: rounded 2xl cards, shadows, gradients, micro-interactions.
+ * DashboardHome
+ * - Replaced top-row "New Customers" with "Total Customers".
+ * - Removed the left-column "Total Customers" card.
+ * - Hook order fixed previously: all hooks run before any early returns.
  */
 
 function StatCard({ title, value, subtitle, icon, trend }) {
-  // trend is optional: { text: "+12.5%", tone: "positive"|"negative"|"neutral" }
   const trendColor =
-    trend?.tone === "positive" ? "bg-green-50 text-green-700 ring-green-100" :
-    trend?.tone === "negative" ? "bg-red-50 text-red-700 ring-red-100" :
-    "bg-slate-50 text-slate-700 ring-slate-100";
+    trend?.tone === "positive"
+      ? "bg-green-50 text-green-700 ring-green-100"
+      : trend?.tone === "negative"
+      ? "bg-red-50 text-red-700 ring-red-100"
+      : "bg-slate-50 text-slate-700 ring-slate-100";
 
   return (
-    <div className="group bg-white dark:bg-slate-900 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800 shadow-lg p-5 transform transition hover:scale-[1.02]">
-      <div className="flex items-start justify-between">
+    <div className="group relative overflow-hidden rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800 shadow-lg p-5 transform transition-transform hover:scale-[1.02]">
+      <div className="pointer-events-none absolute -top-10 -right-20 h-40 w-40 opacity-10 blur-2xl bg-gradient-to-br from-blue-400 to-violet-400 group-hover:opacity-20 transition-opacity" />
+      <div className="flex items-start justify-between relative z-10">
         <div>
           <div className="text-xs font-medium text-slate-500">{title}</div>
           <div className="mt-2 text-2xl font-extrabold tracking-tight">{value}</div>
@@ -57,6 +60,56 @@ function StatCard({ title, value, subtitle, icon, trend }) {
   );
 }
 
+function TopCustomerCard({ topCustomer }) {
+  const hasData = Boolean(topCustomer?.id);
+  const formattedRevenue = hasData ? `₹${topCustomer.revenue.toLocaleString()}` : "₹0";
+
+  return (
+    <div className="group relative overflow-hidden rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800 shadow-lg p-5 transform transition hover:scale-[1.02]">
+      <div className="pointer-events-none absolute -left-10 -bottom-6 h-36 w-36 opacity-8 blur-2xl bg-gradient-to-tr from-amber-300 to-orange-400 group-hover:opacity-15 transition-opacity" />
+      <div className="flex items-start justify-between relative z-10">
+        <div>
+          <div className="text-xs font-medium text-slate-500">Top Customer</div>
+          <div className="mt-2 flex items-center gap-3">
+            <div className="h-10 w-10 flex items-center justify-center rounded-full bg-gradient-to-br from-amber-200 to-amber-400 text-amber-800 font-semibold shadow-sm">
+              {hasData
+                ? topCustomer.name
+                    .split(" ")
+                    .map((s) => s[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase()
+                : "—"}
+            </div>
+            <div>
+              <div className="text-lg font-extrabold tracking-tight">{hasData ? topCustomer.name : "No customers"}</div>
+              <div className="text-xs text-slate-400">{hasData ? `${topCustomer.ordersCount} orders` : "No orders yet"}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="ml-4 flex flex-col items-end space-y-3">
+          <div className="flex items-center space-x-2">
+            <div className="p-2 rounded-md bg-slate-100 dark:bg-slate-800">
+              <Trophy className="h-4 w-4 text-amber-700" />
+            </div>
+          </div>
+
+          <div className="text-right">
+            <div className="text-sm text-slate-500">Contribution</div>
+            <div className="text-lg font-bold">{formattedRevenue}</div>
+            {hasData && (
+              <div className="mt-1 text-[11px] font-semibold px-2 py-1 inline-block rounded-full bg-amber-50 text-amber-800 ring-1 ring-amber-100">
+                {((topCustomer.revenue / Math.max(topCustomer.totalRevenue, 1)) * 100).toFixed(1)}% of total
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardHome() {
   const { data: session, status } = useSession();
   const [loading, setLoading] = useState(true);
@@ -66,6 +119,7 @@ export default function DashboardHome() {
     campaigns: [],
     logs: [],
   });
+
   const displayName = session?.user?.name ?? session?.user?.email ?? "User";
 
   const fetchAllData = async () => {
@@ -105,11 +159,13 @@ export default function DashboardHome() {
     if (status === "authenticated") {
       fetchAllData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
+  // CHART DATA
   const chartData = useMemo(() => {
     const recentCampaigns = metrics.campaigns
-      .slice() // keep original order safe
+      .slice()
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
       .slice(0, 5);
 
@@ -119,12 +175,52 @@ export default function DashboardHome() {
       const failed = relatedLogs.length - sent;
       return {
         name: campaign.name,
-        sent: sent,
-        failed: failed,
+        sent,
+        failed,
       };
     });
   }, [metrics]);
 
+  // totalRevenue
+  const totalRevenue = useMemo(() => {
+    return metrics.orders.reduce((sum, o) => sum + (o.amount || 0), 0);
+  }, [metrics.orders]);
+
+  // TOP CUSTOMER
+  const topCustomer = useMemo(() => {
+    if (!metrics.orders.length || !metrics.customers.length) return null;
+
+    const map = new Map();
+    for (const order of metrics.orders) {
+      let cid = undefined;
+      if (order.customer && typeof order.customer === "object") {
+        cid = order.customer._id ?? order.customer.id ?? undefined;
+      }
+      if (!cid && (order.customerId || order.customer_id)) {
+        cid = order.customerId ?? order.customer_id;
+      }
+      cid = cid ?? "_unknown_";
+
+      const prev = map.get(cid) ?? { revenue: 0, ordersCount: 0 };
+      prev.revenue += order.amount || 0;
+      prev.ordersCount += 1;
+      map.set(cid, prev);
+    }
+
+    let best = { id: null, revenue: 0, ordersCount: 0, name: null };
+    for (const [id, stats] of map.entries()) {
+      const cust = metrics.customers.find((c) => c._id === id || c.id === id);
+      const name = cust ? (cust.name ?? cust.fullName ?? cust.email ?? "Customer") : id === "_unknown_" ? "Unknown" : id;
+      if (stats.revenue > best.revenue) {
+        best = { id, revenue: stats.revenue, ordersCount: stats.ordersCount, name };
+      }
+    }
+
+    if (best.id === null) return null;
+    return { ...best, totalRevenue: totalRevenue || 0 };
+  }, [metrics.orders, metrics.customers, totalRevenue]);
+
+  // EARLY RETURNS
   if (status === "loading" || loading) {
     return (
       <div className="p-6">
@@ -154,9 +250,7 @@ export default function DashboardHome() {
     );
   }
 
-  // compute revenue safely
-  const totalRevenue = metrics.orders.reduce((sum, o) => sum + (o.amount || 0), 0);
-
+  // MAIN RENDER
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
@@ -175,7 +269,7 @@ export default function DashboardHome() {
 
       <Separator className="my-6" />
 
-      {/* Top stats row (styled) */}
+      {/* Top stats row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
         <StatCard
           title="Total Revenue"
@@ -184,20 +278,18 @@ export default function DashboardHome() {
           icon={<svg className="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none"><path d="M12 8v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M8 12h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
           trend={{ text: "+12.5%", tone: "positive" }}
         />
+
+        {/* Replaced: show Total Customers in top row */}
         <StatCard
-          title="New Customers"
+          title="Total Customers"
           value={metrics.customers.length ? metrics.customers.length : 0}
-          subtitle="Down 20% this period — Acquisition needs attention"
+          subtitle="Count of registered users in the CRM"
           icon={<Users className="h-5 w-5 text-slate-600" />}
-          trend={{ text: "-20%", tone: "negative" }}
+          trend={{ text: "Stable", tone: "neutral" }}
         />
-        <StatCard
-          title="Active Accounts"
-          value={metrics.customers.length ? (metrics.customers.length * 4).toLocaleString() : 0} // placeholder style without changing real content
-          subtitle="Strong user retention — Engagement exceed targets"
-          icon={<svg className="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/><path d="M6 20c1.5-4 10.5-4 12 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>}
-          trend={{ text: "+12.5%", tone: "positive" }}
-        />
+
+        <TopCustomerCard topCustomer={topCustomer} />
+
         <StatCard
           title="Growth Rate"
           value="4.5%"
@@ -209,19 +301,8 @@ export default function DashboardHome() {
 
       {/* Main content */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left column: KPI Cards (kept original content but re-styled) */}
+        {/* Left column: removed the Total Customers card as requested */}
         <div className="lg:col-span-1 space-y-6">
-          <Card className="rounded-2xl ring-1 ring-slate-200 shadow-lg">
-            <CardHeader className="flex items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Total Customers</CardTitle>
-              <div className="p-2 bg-slate-50 rounded-md"><Users className="h-4 w-4 text-slate-600" /></div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{metrics.customers.length}</div>
-              <p className="text-xs text-slate-400">Total users in your CRM</p>
-            </CardContent>
-          </Card>
-
           <Card className="rounded-2xl ring-1 ring-slate-100 shadow-lg">
             <CardHeader className="flex items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
@@ -245,7 +326,7 @@ export default function DashboardHome() {
           </Card>
         </div>
 
-        {/* Right / wide column: Chart (styled) */}
+        {/* Chart column */}
         <div className="lg:col-span-2">
           <Card className="rounded-2xl ring-1 ring-slate-100 shadow-xl overflow-hidden">
             <CardHeader>
@@ -255,7 +336,6 @@ export default function DashboardHome() {
                   <p className="text-sm text-slate-400">Delivery statistics for the last 5 campaigns.</p>
                 </div>
                 <div>
-                  {/* kept button and colors unchanged */}
                   <Badge className="text-sm">Last 5</Badge>
                 </div>
               </div>

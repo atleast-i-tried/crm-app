@@ -30,6 +30,14 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+
 export default function LogsPage() {
   const { status } = useSession();
   const [logs, setLogs] = useState([]);
@@ -41,6 +49,12 @@ export default function LogsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCampaignLogs, setSelectedCampaignLogs] = useState(null);
   const logsPerPage = 15;
+
+  // Summary dialog state
+  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryText, setSummaryText] = useState("");
+  const [summaryError, setSummaryError] = useState("");
 
   const fetchLogs = async () => {
     try {
@@ -67,6 +81,7 @@ export default function LogsPage() {
     setCurrentPage(1);
   };
 
+  // group logs by campaign name
   const groupedLogs = useMemo(() => {
     const groups = {};
     logs.forEach((log) => {
@@ -80,20 +95,33 @@ export default function LogsPage() {
       groups[campaignName].logs.push(log);
     });
 
+    // apply filters
     const filteredGroups = Object.values(groups).filter((group) => {
       const campaignMatch = group.name
         .toLowerCase()
         .includes(filters.campaignName.toLowerCase());
-      const statusMatch = group.logs.some((log) =>
-        log.status.toLowerCase().includes(filters.status.toLowerCase())
-      );
+      const statusMatch = filters.status
+        ? group.logs.some((log) =>
+            (log.status || "")
+              .toString()
+              .toLowerCase()
+              .includes(filters.status.toLowerCase())
+          )
+        : true;
       return campaignMatch && statusMatch;
+    });
+
+    // sort by most recent (by createdAt of first log)
+    filteredGroups.sort((a, b) => {
+      const aDate = new Date(a.logs?.[0]?.createdAt || 0).getTime();
+      const bDate = new Date(b.logs?.[0]?.createdAt || 0).getTime();
+      return bDate - aDate;
     });
 
     return filteredGroups;
   }, [logs, filters]);
 
-  const totalPages = Math.ceil(groupedLogs.length / logsPerPage);
+  const totalPages = Math.max(1, Math.ceil(groupedLogs.length / logsPerPage));
   const currentGroups = useMemo(() => {
     const startIndex = (currentPage - 1) * logsPerPage;
     const endIndex = startIndex + logsPerPage;
@@ -106,6 +134,82 @@ export default function LogsPage() {
     );
     setSelectedCampaignLogs(campaignLogs);
   };
+
+  // Helper to extract numeric spend from a log.customer object
+  function getCustomerSpendFromLog(log) {
+    const c = log.customer || {};
+    const possibleKeys = ["totalSpent", "total_spent", "spend", "total_spend", "lifetime_spend", "lifetimeSpend", "spend_amount"];
+    for (const k of possibleKeys) {
+      if (c[k] !== undefined && c[k] !== null) {
+        const n = Number(c[k]);
+        if (!Number.isNaN(n)) return n;
+      }
+    }
+    // try nested orders sum if present
+    if (Array.isArray(c.orders)) {
+      const sum = c.orders.reduce((s, o) => s + Number(o?.amount || 0), 0);
+      if (!Number.isNaN(sum) && sum > 0) return sum;
+    }
+    return null;
+  }
+
+  async function handleSummarizeCampaign(group) {
+    setIsSummaryOpen(true);
+    setSummaryLoading(true);
+    setSummaryText("");
+    setSummaryError("");
+
+    try {
+      const logsForCampaign = group.logs || [];
+
+      const sent = logsForCampaign.filter((l) => String(l.status).toUpperCase() === "SENT").length;
+      const failed = logsForCampaign.length - sent;
+      const audienceSize = logsForCampaign.length;
+
+      // compute high-value customers (> 10k)
+      const highValueThreshold = 10000;
+      const highValueLogs = logsForCampaign.filter((l) => {
+        const spend = getCustomerSpendFromLog(l);
+        return typeof spend === "number" && spend > highValueThreshold;
+      });
+      const highValueSent = highValueLogs.filter((l) => String(l.status).toUpperCase() === "SENT").length;
+      const highValueRate = highValueLogs.length > 0 ? Math.round((highValueSent / highValueLogs.length) * 100) : null;
+
+      // Also compute top vendor response examples (if any)
+      const vendorResponses = logsForCampaign
+        .map((l) => l.vendorResponse)
+        .filter(Boolean)
+        .slice(0, 3);
+
+      const stats = {
+        audienceSize,
+        sent,
+        failed,
+        highValueGroupCount: highValueLogs.length,
+        highValueDeliveryRate: highValueRate !== null ? `${highValueRate}%` : "N/A",
+        vendorResponsesExample: vendorResponses,
+      };
+
+      const res = await fetch("/api/ai/summarize-performance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stats, campaignName: group.name }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "Failed to generate summary");
+      }
+
+      const data = await res.json();
+      setSummaryText(data.summary || "⚠️ No summary returned.");
+    } catch (err) {
+      console.error(err);
+      setSummaryError(err?.message || "Error generating summary");
+    } finally {
+      setSummaryLoading(false);
+    }
+  }
 
   if (status === "loading") {
     return (
@@ -241,34 +345,43 @@ export default function LogsPage() {
                 <TableHead>Sent</TableHead>
                 <TableHead>Failed</TableHead>
                 <TableHead>Date</TableHead>
+                <TableHead>Summary</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {currentGroups.map((group) => {
-                const sentCount = group.logs.filter((l) => l.status === "SENT").length;
+                const sentCount = group.logs.filter((l) => String(l.status).toUpperCase() === "SENT").length;
                 const failedCount = group.logs.length - sentCount;
                 return (
                   <TableRow
                     key={group.name}
                     className="cursor-pointer hover:bg-slate-100 dark:hover:bg-gray-800 transition"
-                    onClick={() => handleCampaignClick(group.name)}
                   >
-                    <TableCell className="font-medium">{group.name}</TableCell>
-                    <TableCell>{group.logs.length}</TableCell>
-                    <TableCell>
+                    <TableCell className="font-medium" onClick={() => handleCampaignClick(group.name)}>
+                      {group.name}
+                    </TableCell>
+                    <TableCell onClick={() => handleCampaignClick(group.name)}>{group.logs.length}</TableCell>
+                    <TableCell onClick={() => handleCampaignClick(group.name)}>
                       <Badge variant="success">{sentCount}</Badge>
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={() => handleCampaignClick(group.name)}>
                       <Badge variant="destructive">{failedCount}</Badge>
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={() => handleCampaignClick(group.name)}>
                       {new Date(group.logs[0].createdAt).toLocaleDateString()}
+                    </TableCell>
+
+                    <TableCell>
+                      <Button size="sm" onClick={() => handleSummarizeCampaign(group)}>
+                        Summary
+                      </Button>
                     </TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
           </Table>
+
           <div className="mt-6 flex justify-center">
             <Pagination>
               <PaginationContent>
@@ -316,6 +429,38 @@ export default function LogsPage() {
           No logs found. Launch a campaign to see logs.
         </div>
       )}
+
+      {/* Summary Dialog */}
+      <Dialog open={isSummaryOpen} onOpenChange={setIsSummaryOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Campaign Summary</DialogTitle>
+            <DialogDescription>
+              AI-generated summary for the selected campaign.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-4">
+            {summaryLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-6 w-full" />
+                <Skeleton className="h-6 w-full" />
+                <Skeleton className="h-6 w-full" />
+              </div>
+            ) : summaryError ? (
+              <div className="text-red-500">{summaryError}</div>
+            ) : (
+              <div className="whitespace-pre-wrap">{summaryText}</div>
+            )}
+          </div>
+
+          <div className="mt-6 flex justify-end">
+            <Button variant="ghost" onClick={() => setIsSummaryOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
