@@ -46,6 +46,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { EllipsisVertical, X } from "lucide-react";
 
+// Added Card imports for the AI UI block (boilerplate)
+import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
+
 export default function CampaignsPage() {
   const { data: session, status } = useSession();
   const [campaigns, setCampaigns] = useState([]);
@@ -53,17 +56,21 @@ export default function CampaignsPage() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [selectedCampaign, setSelectedCampaign] = useState(null); // New state for selected campaign
+  const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [newCampaign, setNewCampaign] = useState({
     name: "",
     message: "",
     objective: "",
-    filters: [], // Array of filter rules
-    logic: "AND", // "AND" or "OR"
+    filters: [],
+    logic: "AND",
   });
-  const [aiSuggestions, setAiSuggestions] = useState([]);
+  const [aiSuggestions, setAiSuggestions] = useState([]); // always an array
   const [aiLoading, setAiLoading] = useState(false);
   const [audienceSize, setAudienceSize] = useState(0);
+
+  // New state: controlled confirm delete dialog
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const filterOptions = [
     { label: "Min. Spend", key: "minSpend" },
@@ -72,18 +79,21 @@ export default function CampaignsPage() {
   ];
 
   const applyFilters = (customerList, filters, logic) => {
-    if (filters.length === 0) return customerList;
+    if (!filters || filters.length === 0) return customerList;
 
     return customerList.filter((c) => {
       const results = filters.map((f) => {
         switch (f.key) {
           case "minSpend":
-            return c.totalSpend >= f.value;
+            return (c.totalSpend || 0) >= (Number(f.value) || 0);
           case "minVisits":
-            return c.visits >= f.value;
+            return (c.visits || 0) >= (Number(f.value) || 0);
           case "inactiveDays":
-            if (f.value === 0) return true;
-            return c.lastActive && (new Date() - new Date(c.lastActive)) / (1000 * 60 * 60 * 24) >= f.value;
+            if (!f.value) return true;
+            return (
+              c.lastActive &&
+              (new Date() - new Date(c.lastActive)) / (1000 * 60 * 60 * 24) >= Number(f.value)
+            );
           default:
             return true;
         }
@@ -97,11 +107,11 @@ export default function CampaignsPage() {
     updatedFilters[index] = { ...updatedFilters[index], key, value };
     setNewCampaign({ ...newCampaign, filters: updatedFilters });
   };
-  
+
   const handleLogicChange = (logic) => {
     setNewCampaign({ ...newCampaign, logic });
   };
-  
+
   const handleAddFilter = () => {
     if (newCampaign.filters.length < 3) {
       setNewCampaign({
@@ -110,7 +120,7 @@ export default function CampaignsPage() {
       });
     }
   };
-  
+
   const handleRemoveFilter = (index) => {
     const updatedFilters = newCampaign.filters.filter((_, i) => i !== index);
     setNewCampaign({ ...newCampaign, filters: updatedFilters });
@@ -149,6 +159,7 @@ export default function CampaignsPage() {
     if (status === "authenticated") {
       fetchAllData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
   useEffect(() => {
@@ -192,6 +203,7 @@ export default function CampaignsPage() {
         logic: "AND",
       });
       setAudienceSize(0);
+      setAiSuggestions([]); // reset suggestions after create
       toast.success("Campaign launched successfully!");
     } catch (error) {
       toast.error(error.message);
@@ -216,6 +228,26 @@ export default function CampaignsPage() {
     }
   };
 
+  // Normalize any API result into an array of strings
+  const normalizeSuggestions = (raw) => {
+    if (!raw && raw !== "") return [];
+    if (Array.isArray(raw)) {
+      return raw.map((s) => String(s).trim()).filter(Boolean);
+    }
+    if (typeof raw === "string") {
+      const lines = raw
+        .split(/\r?\n/)
+        .map((l) => l.trim().replace(/^[\d\-\•\)\.\s]+/, "").trim())
+        .filter(Boolean);
+      if (lines.length > 0) return lines;
+      const cleaned = raw.trim();
+      if (cleaned) return [cleaned];
+      return [];
+    }
+    return [String(raw)];
+  };
+
+  // Keep existing getAiSuggestions logic but normalize response to array
   const getAiSuggestions = async () => {
     if (!newCampaign.objective) {
       toast.error("Please enter a campaign objective first.");
@@ -228,12 +260,28 @@ export default function CampaignsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ objective: newCampaign.objective }),
       });
-      if (!res.ok) throw new Error("Failed to get AI suggestions");
+
+      if (!res.ok) {
+        let errText = "Failed to get AI suggestions";
+        try {
+          const errBody = await res.json();
+          errText = errBody?.error || errText;
+        } catch (_) {}
+        throw new Error(errText);
+      }
+
       const data = await res.json();
-      setAiSuggestions(data.suggestions);
-      toast.success("AI suggestions generated!");
+      const suggestions = normalizeSuggestions(data?.suggestions ?? data?.result ?? "");
+      setAiSuggestions(suggestions);
+      if (suggestions.length === 0) {
+        toast.error("AI returned no suggestions.");
+      } else {
+        toast.success("AI suggestions generated!");
+      }
     } catch (error) {
-      toast.error(error.message);
+      console.error("getAiSuggestions error:", error);
+      toast.error(error.message || "Failed to get AI suggestions");
+      setAiSuggestions([]); // ensure array
     } finally {
       setAiLoading(false);
     }
@@ -242,12 +290,35 @@ export default function CampaignsPage() {
   const campaignStats = useMemo(() => {
     return campaigns.map((campaign) => {
       const relatedLogs = logs.filter((log) => log.campaign === campaign._id);
-      const sentCount = relatedLogs.filter((log) => log.status === "SENT")
-        .length;
+      const sentCount = relatedLogs.filter((log) => log.status === "SENT").length;
       const failedCount = relatedLogs.length - sentCount;
-      const audienceSize = relatedLogs.length;
-      const successRate = audienceSize > 0 ? (sentCount / audienceSize) * 100 : 0;
-      const failedRate = audienceSize > 0 ? (failedCount / audienceSize) * 100 : 0;
+      const logsAudience = relatedLogs.length;
+
+      // compute audience from campaign filters (fallback when logs aren't present)
+      const audienceFromFilters = (campaign.filters && campaign.filters.length > 0)
+        ? applyFilters(customers, campaign.filters, campaign.logic || "AND").length
+        : 0;
+
+      // prefer logs-based audience if logs exist, otherwise use filters-based audience
+      const audienceSize = logsAudience > 0 ? logsAudience : audienceFromFilters;
+
+      // Success / failed rates:
+      // - if we have logs: use logs to compute success/failed rates
+      // - if no logs but filters produce an audience: treat as 100% success (as requested)
+      // - otherwise 0
+      let successRate = 0;
+      let failedRate = 0;
+
+      if (logsAudience > 0) {
+        successRate = audienceSize > 0 ? (sentCount / audienceSize) * 100 : 0;
+        failedRate = audienceSize > 0 ? (failedCount / audienceSize) * 100 : 0;
+      } else if (audienceFromFilters > 0) {
+        successRate = 100;
+        failedRate = 0;
+      } else {
+        successRate = 0;
+        failedRate = 0;
+      }
 
       return {
         ...campaign,
@@ -258,7 +329,8 @@ export default function CampaignsPage() {
         failedRate: failedRate.toFixed(2),
       };
     });
-  }, [campaigns, logs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaigns, logs, customers]);
 
   if (status === "loading") {
     return (
@@ -287,6 +359,18 @@ export default function CampaignsPage() {
       </div>
     );
   }
+
+  // confirm delete action handler (keeps UI responsive)
+  const confirmDelete = async () => {
+    if (!confirmDeleteId) return;
+    // close modal immediately for good UX, but keep id so delete runs
+    setConfirmDeleteOpen(false);
+    try {
+      await handleDeleteCampaign(confirmDeleteId);
+    } finally {
+      setConfirmDeleteId(null);
+    }
+  };
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -342,7 +426,7 @@ export default function CampaignsPage() {
                     </Button>
                   </div>
                 </div>
-                
+
                 {newCampaign.filters.map((filter, index) => (
                   <div key={index} className="flex items-center gap-2">
                     <select
@@ -367,17 +451,17 @@ export default function CampaignsPage() {
                     </Button>
                   </div>
                 ))}
-                
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  className="w-full" 
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
                   onClick={handleAddFilter}
                   disabled={newCampaign.filters.length >= 3}
                 >
                   + Add Filter
                 </Button>
-                
+
                 <div className="text-center text-sm font-medium mt-2">
                   Audience Size: <Badge variant="secondary">{audienceSize}</Badge>
                 </div>
@@ -385,58 +469,65 @@ export default function CampaignsPage() {
 
               <Separator />
 
-              {/* AI Integration Section */}
+              {/* AI Integration Section - boilerplate Card UI preserved */}
               <div className="space-y-4">
                 <h4 className="text-sm font-semibold text-gray-500">AI Message Suggestions</h4>
-                <div className="flex gap-2 items-end">
-                  <div className="flex-1 space-y-2">
-                    <Label htmlFor="objective">Campaign Objective</Label>
-                    <Input
-                      id="objective"
-                      name="objective"
-                      placeholder="e.g., 'bring back inactive users'"
-                      value={newCampaign.objective}
-                      onChange={handleInputChange}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={getAiSuggestions}
-                    disabled={aiLoading}
-                  >
-                    {aiLoading ? "Generating..." : "Get Suggestions"}
-                  </Button>
-                </div>
-                {aiSuggestions.length > 0 && (
-                  <div className="space-y-2">
-                    {aiSuggestions.map((suggestion, index) => (
-                      <div
-                        key={index}
-                        className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition"
-                        onClick={() =>
-                          setNewCampaign({
-                            ...newCampaign,
-                            message: suggestion,
-                          })
-                        }
-                      >
-                        <p className="text-sm">{suggestion}</p>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>AI Message Assistant</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex gap-2 items-end">
+                      <div className="flex-1 space-y-2">
+                        <Label htmlFor="objective">Campaign Objective</Label>
+                        <Input
+                          id="objective"
+                          name="objective"
+                          placeholder="e.g., 'bring back inactive users'"
+                          value={newCampaign.objective}
+                          onChange={handleInputChange}
+                        />
                       </div>
-                    ))}
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <Label htmlFor="message">Final Message</Label>
-                  <Textarea
-                    id="message"
-                    name="message"
-                    value={newCampaign.message}
-                    onChange={handleInputChange}
-                    required
-                    placeholder="Enter your campaign message here..."
-                  />
-                </div>
+                      <Button type="button" onClick={getAiSuggestions} disabled={aiLoading}>
+                        {aiLoading ? "Generating..." : "✨ Generate AI Messages"}
+                      </Button>
+                    </div>
+
+                    {aiSuggestions && aiSuggestions.length > 0 && (
+                      <div className="space-y-2">
+                        {aiSuggestions.map((suggestion, index) => (
+                          <div
+                            key={index}
+                            className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition"
+                            onClick={() =>
+                              setNewCampaign({
+                                ...newCampaign,
+                                message: suggestion,
+                              })
+                            }
+                          >
+                            <p className="text-sm">{suggestion}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <Label htmlFor="message">Final Message</Label>
+                      <Textarea
+                        id="message"
+                        name="message"
+                        value={newCampaign.message}
+                        onChange={handleInputChange}
+                        required
+                        placeholder="Enter your campaign message here..."
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
+
               <Button type="submit" className="w-full">
                 Launch Campaign
               </Button>
@@ -471,55 +562,51 @@ export default function CampaignsPage() {
               .map((c) => {
                 const stats = campaignStats.find((s) => s._id === c._id);
                 return (
-                  <TableRow key={c._id} className="cursor-pointer hover:bg-gray-100/50" onClick={() => setSelectedCampaign(stats)}>
+                  <TableRow
+                    key={c._id}
+                    className="cursor-pointer hover:bg-gray-100/50"
+                    onClick={() => setSelectedCampaign(stats)}
+                  >
                     <TableCell className="font-medium">{c.name}</TableCell>
                     <TableCell>{c.createdBy}</TableCell>
                     <TableCell>{stats?.audienceSize || 0}</TableCell>
                     <TableCell>
-                      <Badge variant="success">
+                      {/* make success percentage visually green */}
+                      <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">
                         {stats?.successRate}%
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="destructive">
-                        {stats?.failedRate}%
-                      </Badge>
+                      <Badge variant="destructive">{stats?.failedRate}%</Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" className="h-8 w-8 p-0">
-                            <span className="sr-only">Open menu</span>
-                            <EllipsisVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                                Delete
-                              </DropdownMenuItem>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  This action cannot be undone. This will permanently
-                                  delete this campaign and all associated logs.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => handleDeleteCampaign(c._id)}
-                                >
-                                  Continue
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {/* stopPropagation added to prevent row click when interacting with menu */}
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              className="h-8 w-8 p-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <span className="sr-only">Open menu</span>
+                              <EllipsisVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                            {/* When Delete clicked we set confirmDeleteId and open the top-level dialog */}
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDeleteId(c._id);
+                                setConfirmDeleteOpen(true);
+                              }}
+                            >
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -527,10 +614,28 @@ export default function CampaignsPage() {
           </TableBody>
         </Table>
       ) : (
-        <div className="text-center text-gray-500 py-10">
-          No campaigns found. Create your first campaign to get started.
-        </div>
+        <div className="text-center text-gray-500 py-10">No campaigns found. Create your first campaign to get started.</div>
       )}
+
+      {/* Top-level delete confirmation dialog (controlled) */}
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={(val) => { setConfirmDeleteOpen(val); if (!val) setConfirmDeleteId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete this campaign and all associated logs.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { setConfirmDeleteOpen(false); setConfirmDeleteId(null); }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete}>
+              Continue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Campaign Details Dialog */}
       <Dialog open={!!selectedCampaign} onOpenChange={() => setSelectedCampaign(null)}>
@@ -538,9 +643,7 @@ export default function CampaignsPage() {
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>{selectedCampaign.name}</DialogTitle>
-              <DialogDescription>
-                Details for this campaign.
-              </DialogDescription>
+              <DialogDescription>Details for this campaign.</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-2 items-center gap-4">
