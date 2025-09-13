@@ -1,3 +1,5 @@
+// eslint-disable-next-line react/no-unescaped-entities
+
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
