@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,6 +53,7 @@ export default function OrdersPage() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [newOrder, setNewOrder] = useState({
     customerId: "",
     amount: "",
@@ -65,49 +66,127 @@ export default function OrdersPage() {
   const [customerFilter, setCustomerFilter] = useState("");
   const ordersPerPage = 15;
 
-  const fetchOrders = async () => {
+  // refs for customer diffing and to prevent toasts on initial load
+  const prevCustomersRef = useRef([]);
+  const isInitialCustomersRef = useRef(true);
+  const customersPollRef = useRef(null);
+
+  const fetchOrders = useCallback(async () => {
     try {
       const res = await fetch("/api/orders");
       if (!res.ok) throw new Error("Failed to fetch orders");
       const data = await res.json();
-      setOrders(data);
+      setOrders(Array.isArray(data) ? data : []);
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to fetch orders");
     }
+  }, []);
+
+  const _processCustomerDiffsAndSet = (newList) => {
+    const prevList = prevCustomersRef.current || [];
+    // map prev by id for quick lookup
+    const prevMap = {};
+    prevList.forEach((p) => {
+      if (p && p._id) prevMap[p._id] = p;
+    });
+
+    const added = [];
+    const edited = [];
+    newList.forEach((c) => {
+      if (!c || !c._id) return;
+      const prev = prevMap[c._id];
+      if (!prev) {
+        added.push(c);
+      } else {
+        // simple deep compare for relevant fields (name, email, updatedAt)
+        // If your customer object uses other fields to detect edits, include them.
+        const prevStr = JSON.stringify({
+          name: prev.name,
+          email: prev.email,
+          updatedAt: prev.updatedAt,
+        });
+        const currStr = JSON.stringify({
+          name: c.name,
+          email: c.email,
+          updatedAt: c.updatedAt,
+        });
+        if (prevStr !== currStr) edited.push(c);
+      }
+    });
+
+    // Only show toasts after the initial load
+    if (!isInitialCustomersRef.current) {
+      added.forEach((c) =>
+        toast.success(`${c.name || "Customer"} added`, { description: c.email })
+      );
+      edited.forEach((c) =>
+        toast.success(`${c.name || "Customer"} updated`, { description: c.email })
+      );
+    }
+
+    prevCustomersRef.current = newList;
+    isInitialCustomersRef.current = false;
+    setCustomers(newList);
   };
 
-  const fetchCustomers = async () => {
+  const fetchCustomers = useCallback(async () => {
     try {
       const res = await fetch("/api/customers");
       if (!res.ok) throw new Error("Failed to fetch customers");
       const data = await res.json();
-      setCustomers(data);
-    } catch (error) {
-      toast.error(error.message);
-    }
-  };
-
-  useEffect(() => {
-    if (status === "authenticated") {
-      Promise.all([fetchOrders(), fetchCustomers()]).finally(() => {
-        setLoading(false);
+      const list = Array.isArray(data) ? data : [];
+      // sort customers newest first (if they have createdAt)
+      list.sort((a, b) => {
+        const ta = new Date(a.createdAt || a.updatedAt || 0).getTime();
+        const tb = new Date(b.createdAt || b.updatedAt || 0).getTime();
+        return tb - ta;
       });
+      _processCustomerDiffsAndSet(list);
+    } catch (error) {
+      toast.error(error.message || "Failed to fetch customers");
     }
-  }, [status]);
+  }, []);
+
+  // initial fetch + polling for customer changes
+  useEffect(() => {
+    if (status !== "authenticated") return;
+
+    let isMounted = true;
+    setLoading(true);
+
+    Promise.all([fetchOrders(), fetchCustomers()]).finally(() => {
+      if (!isMounted) return;
+      setLoading(false);
+    });
+
+    // poll customers every 20 seconds to detect additions/edits
+    customersPollRef.current = setInterval(() => {
+      fetchCustomers();
+    }, 20000);
+
+    return () => {
+      isMounted = false;
+      if (customersPollRef.current) clearInterval(customersPollRef.current);
+    };
+  }, [status, fetchOrders, fetchCustomers]);
 
   const handleAddInputChange = (e) => {
     const { name, value } = e.target;
-    setNewOrder({ ...newOrder, [name]: value });
+    setNewOrder((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
-    setFilters({ ...filters, [name]: value });
+    setFilters((prev) => ({ ...prev, [name]: value }));
     setCurrentPage(1);
   };
 
   const handleAddOrder = async (e) => {
     e.preventDefault();
+    // close modal immediately to avoid multiple clicks as requested
+    setIsModalOpen(false);
+    setIsSubmitting(true);
+
     try {
       const res = await fetch("/api/orders", {
         method: "POST",
@@ -118,42 +197,69 @@ export default function OrdersPage() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || "Failed to add order");
       }
 
-      await fetchOrders(); // Re-fetch orders to show the new one
-      setIsModalOpen(false);
+      // re-fetch orders so newest appear on top
+      await fetchOrders();
       setNewOrder({ customerId: "", amount: "" });
       toast.success("Order added successfully!");
+      setCurrentPage(1); // show first page which contains latest orders
     } catch (error) {
-      toast.error(error.message);
+      // reopen dialog on error so user can retry / edit
+      setIsModalOpen(true);
+      toast.error(error.message || "Could not add order");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
+  // Filter and sort orders: ensure newest first (reverse chronological)
   const filteredOrders = useMemo(() => {
-    return orders.filter((order) => {
-      const customerNameMatch = order.customer?.name
-        ?.toLowerCase()
-        .includes(filters.customerName.toLowerCase());
-      const statusMatch = order.status
+    const lowerCustomer = (filters.customerName || "").toLowerCase();
+    const lowerStatus = (filters.status || "").toLowerCase();
+
+    const filtered = (orders || []).filter((order) => {
+      const customerNameMatch = (order.customer?.name || "")
         .toLowerCase()
-        .includes(filters.status.toLowerCase());
+        .includes(lowerCustomer);
+      const statusMatch = (order.status || "").toLowerCase().includes(lowerStatus);
       return customerNameMatch && statusMatch;
     });
+
+    // Sort by createdAt desc (newest first)
+    filtered.sort((a, b) => {
+      const ta = new Date(a.createdAt || a.updatedAt || 0).getTime();
+      const tb = new Date(b.createdAt || b.updatedAt || 0).getTime();
+      return tb - ta;
+    });
+
+    return filtered;
   }, [orders, filters]);
 
-  const totalPages = Math.ceil(filteredOrders.length / ordersPerPage);
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ordersPerPage));
   const currentOrders = useMemo(() => {
     const startIndex = (currentPage - 1) * ordersPerPage;
     const endIndex = startIndex + ordersPerPage;
     return filteredOrders.slice(startIndex, endIndex);
   }, [filteredOrders, currentPage]);
 
-  const filteredCustomers = customers.filter((c) => {
-    if (!customerFilter) return true;
-    return c.name?.toLowerCase().startsWith(customerFilter.toLowerCase());
-  });
+  // customers shown in select — filtered and sorted newest-first
+  const filteredCustomers = useMemo(() => {
+    const cf = customerFilter?.toLowerCase() || "";
+    const list = (customers || []).filter((c) => {
+      if (!cf) return true;
+      return (c.name || "").toLowerCase().startsWith(cf);
+    });
+    // already sorted in fetchCustomers, but ensure newest-first anyway
+    list.sort((a, b) => {
+      const ta = new Date(a.createdAt || a.updatedAt || 0).getTime();
+      const tb = new Date(b.createdAt || b.updatedAt || 0).getTime();
+      return tb - ta;
+    });
+    return list;
+  }, [customers, customerFilter]);
 
   if (status === "loading") {
     return (
@@ -198,9 +304,7 @@ export default function OrdersPage() {
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Add Order</DialogTitle>
-              <DialogDescription>
-                Fill in the details to add a new order.
-              </DialogDescription>
+              <DialogDescription>Fill in the details to add a new order.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleAddOrder} className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
@@ -208,9 +312,7 @@ export default function OrdersPage() {
                   Customer
                 </Label>
                 <Select
-                  onValueChange={(value) =>
-                    setNewOrder({ ...newOrder, customerId: value })
-                  }
+                  onValueChange={(value) => setNewOrder((prev) => ({ ...prev, customerId: value }))}
                   required
                 >
                   <SelectTrigger className="col-span-3">
@@ -227,15 +329,20 @@ export default function OrdersPage() {
                           autoFocus
                         />
                       </div>
-                      {filteredCustomers.map((c) => (
-                        <SelectItem key={c._id} value={c._id}>
-                          {c.name} ({c.email})
-                        </SelectItem>
-                      ))}
+                      {filteredCustomers.length > 0 ? (
+                        filteredCustomers.map((c) => (
+                          <SelectItem key={c._id} value={c._id}>
+                            {c.name} ({c.email})
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-sm text-gray-500">No customers</div>
+                      )}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>
+
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="amount" className="text-right">
                   Amount
@@ -250,7 +357,10 @@ export default function OrdersPage() {
                   className="col-span-3"
                 />
               </div>
-              <Button type="submit">Save Order</Button>
+
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Saving..." : "Save Order"}
+              </Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -274,6 +384,7 @@ export default function OrdersPage() {
             />
           </PopoverContent>
         </Popover>
+
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="outline" className="w-full md:w-auto">
@@ -317,53 +428,52 @@ export default function OrdersPage() {
                   <TableCell>₹{o.amount}</TableCell>
                   <TableCell>
                     <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
-                      {o.status}
+                      {o.status || "N/A"}
                     </span>
                   </TableCell>
-
-                  <TableCell>
-                    {new Date(o.createdAt).toLocaleDateString()}
-                  </TableCell>
+                  <TableCell>{new Date(o.createdAt || o.updatedAt || Date.now()).toLocaleString()}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+
           <div className="mt-6 flex justify-center">
             <Pagination>
               <PaginationContent>
                 <PaginationItem>
                   <PaginationPrevious
                     href="#"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.max(prev - 1, 1))
-                    }
-                    className={
-                      currentPage === 1 ? "pointer-events-none opacity-50" : ""
-                    }
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setCurrentPage((prev) => Math.max(prev - 1, 1));
+                    }}
+                    className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
                   />
                 </PaginationItem>
+
                 {Array.from({ length: totalPages }, (_, i) => (
                   <PaginationItem key={i}>
                     <PaginationLink
                       href="#"
-                      onClick={() => setCurrentPage(i + 1)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage(i + 1);
+                      }}
                       isActive={i + 1 === currentPage}
                     >
                       {i + 1}
                     </PaginationLink>
                   </PaginationItem>
                 ))}
+
                 <PaginationItem>
                   <PaginationNext
                     href="#"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.min(prev + 1, totalPages))
-                    }
-                    className={
-                      currentPage === totalPages
-                        ? "pointer-events-none opacity-50"
-                        : ""
-                    }
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+                    }}
+                    className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""}
                   />
                 </PaginationItem>
               </PaginationContent>
