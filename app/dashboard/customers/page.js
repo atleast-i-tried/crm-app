@@ -9,7 +9,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { toast } from "sonner";
+import { toast, Toaster } from "sonner"; // <-- imported Toaster
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -44,11 +43,9 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
-  AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
   Sheet,
@@ -56,37 +53,57 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from "@/components/ui/sheet";
+
+/**
+ * Helper: extract timestamp (ms) from a Mongo ObjectId string.
+ * ObjectId first 8 hex chars are seconds since epoch.
+ */
+function idToTimestampMs(id) {
+  try {
+    return parseInt(id.substring(0, 8), 16) * 1000;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/** Sort customers by newest first using ObjectId timestamp */
+function sortCustomersNewestFirst(list = []) {
+  return list.slice().sort((a, b) => idToTimestampMs(b._id) - idToTimestampMs(a._id));
+}
 
 export default function CustomersPage() {
   const { data: session, status } = useSession();
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [newCustomer, setNewCustomer] = useState({
-    name: "",
-    email: "",
-    phone: "",
-  });
+
+  // Add modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ name: "", email: "", phone: "" });
+
+  // Edit sheet state
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
-  const [filters, setFilters] = useState({
-    name: "",
-    email: "",
-    phone: "",
-  });
+
+  // Delete confirm state
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+
+  // Filters & pagination
+  const [filters, setFilters] = useState({ name: "", email: "", phone: "" });
   const [currentPage, setCurrentPage] = useState(1);
   const customersPerPage = 15;
 
   const fetchCustomers = async () => {
+    setLoading(true);
     try {
       const res = await fetch("/api/customers");
       if (!res.ok) throw new Error("Failed to fetch customers");
       const data = await res.json();
-      setCustomers(data);
+      // Sort newest first before setting
+      setCustomers(sortCustomersNewestFirst(data || []));
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || "Unable to load customers");
     } finally {
       setLoading(false);
     }
@@ -100,22 +117,23 @@ export default function CustomersPage() {
 
   const handleAddInputChange = (e) => {
     const { name, value } = e.target;
-    setNewCustomer({ ...newCustomer, [name]: value });
+    setNewCustomer((p) => ({ ...p, [name]: value }));
   };
 
   const handleEditInputChange = (e) => {
     const { name, value } = e.target;
-    setEditingCustomer({ ...editingCustomer, [name]: value });
+    setEditingCustomer((p) => ({ ...p, [name]: value }));
   };
 
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
-    setFilters({ ...filters, [name]: value });
+    setFilters((p) => ({ ...p, [name]: value }));
     setCurrentPage(1);
   };
 
   const handleAddCustomer = async (e) => {
     e.preventDefault();
+    setIsAddModalOpen(false);
     try {
       const res = await fetch("/api/customers", {
         method: "POST",
@@ -124,21 +142,33 @@ export default function CustomersPage() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || "Failed to add customer");
       }
 
-      await fetchCustomers();
-      setIsAddModalOpen(false);
+      // Try to use returned created customer to avoid extra fetch if API returns it
+      const created = await res.json().catch(() => null);
+
+      if (created && created._id) {
+        // Prepend and keep sorted
+        setCustomers((prev) => sortCustomersNewestFirst([created, ...prev]));
+      } else {
+        // Fallback: refresh list
+        await fetchCustomers();
+      }
+
       setNewCustomer({ name: "", email: "", phone: "" });
       toast.success("Customer added successfully!");
+      // ensure we are on first page so the new entry is visible
+      setCurrentPage(1);
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to add customer");
     }
   };
 
   const handleEditCustomer = async (e) => {
     e.preventDefault();
+    setIsEditSheetOpen(false);
     try {
       const res = await fetch(`/api/customers/${editingCustomer._id}`, {
         method: "PUT",
@@ -147,52 +177,67 @@ export default function CustomersPage() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || "Failed to edit customer");
       }
 
-      await fetchCustomers();
-      setIsEditSheetOpen(false);
+      const updated = await res.json().catch(() => null);
+
+      if (updated && updated._id) {
+        // Replace updated in state and keep sorted
+        setCustomers((prev) =>
+          sortCustomersNewestFirst(prev.map((c) => (c._id === updated._id ? updated : c)))
+        );
+      } else {
+        // fallback: refresh
+        await fetchCustomers();
+      }
+
       toast.success("Customer updated successfully!");
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to update customer");
+    } finally {
+      setEditingCustomer(null);
     }
   };
 
   const handleDeleteCustomer = async (customerId) => {
+    setIsConfirmDeleteOpen(false);
+    setConfirmDeleteId(null);
     try {
       const res = await fetch(`/api/customers/${customerId}`, {
         method: "DELETE",
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || "Failed to delete customer");
       }
 
-      await fetchCustomers();
+      // remove from state
+      setCustomers((prev) => prev.filter((c) => c._id !== customerId));
       toast.success("Customer deleted successfully!");
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to delete customer");
     }
   };
 
   const filteredCustomers = useMemo(() => {
     return customers.filter((customer) => {
-      const nameMatch = customer.name
+      const nameMatch = (customer.name || "")
         .toLowerCase()
         .includes(filters.name.toLowerCase());
-      const emailMatch = customer.email
+      const emailMatch = (customer.email || "")
         .toLowerCase()
         .includes(filters.email.toLowerCase());
-      const phoneMatch = customer.phone
-        ?.toLowerCase()
+      const phoneMatch = (customer.phone || "")
+        .toLowerCase()
         .includes(filters.phone.toLowerCase());
       return nameMatch && emailMatch && phoneMatch;
     });
   }, [customers, filters]);
 
-  const totalPages = Math.ceil(filteredCustomers.length / customersPerPage);
+  const totalPages = Math.max(1, Math.ceil(filteredCustomers.length / customersPerPage));
   const currentCustomers = useMemo(() => {
     const startIndex = (currentPage - 1) * customersPerPage;
     const endIndex = startIndex + customersPerPage;
@@ -235,12 +280,16 @@ export default function CustomersPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* Sonner Toaster mounted here — position top-right */}
+      <Toaster position="top-right" />
+
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Customers</h1>
+
+        {/* Open add dialog via normal Button (controlled dialog) */}
+        <Button onClick={() => setIsAddModalOpen(true)}>+ Add New Customer</Button>
+
         <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
-          <DialogTrigger asChild>
-            <Button>+ Add New Customer</Button>
-          </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Add Customer</DialogTitle>
@@ -288,12 +337,19 @@ export default function CustomersPage() {
                   className="col-span-3"
                 />
               </div>
-              <Button type="submit">Save Customer</Button>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="ghost" onClick={() => setIsAddModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit">Save Customer</Button>
+              </div>
             </form>
           </DialogContent>
         </Dialog>
       </div>
+
       <Separator className="my-6" />
+
       <div className="flex flex-col md:flex-row gap-4 mb-4">
         <Popover>
           <PopoverTrigger asChild>
@@ -310,6 +366,7 @@ export default function CustomersPage() {
             />
           </PopoverContent>
         </Popover>
+
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="outline" className="w-full md:w-auto">
@@ -325,6 +382,7 @@ export default function CustomersPage() {
             />
           </PopoverContent>
         </Popover>
+
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="outline" className="w-full md:w-auto">
@@ -371,9 +429,7 @@ export default function CustomersPage() {
                   <TableCell>₹{c.totalSpend || 0}</TableCell>
                   <TableCell>{c.visits || 0}</TableCell>
                   <TableCell>
-                    {c.lastActive
-                      ? new Date(c.lastActive).toLocaleDateString()
-                      : "N/A"}
+                    {c.lastActive ? new Date(c.lastActive).toLocaleDateString() : "N/A"}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
@@ -396,6 +452,7 @@ export default function CustomersPage() {
                           </svg>
                         </Button>
                       </DropdownMenuTrigger>
+
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
                           onClick={() => {
@@ -405,30 +462,15 @@ export default function CustomersPage() {
                         >
                           Edit
                         </DropdownMenuItem>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                              Delete
-                            </DropdownMenuItem>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                This action cannot be undone. This will permanently
-                                delete this customer's data.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => handleDeleteCustomer(c._id)}
-                              >
-                                Continue
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setConfirmDeleteId(c._id);
+                            setIsConfirmDeleteOpen(true);
+                          }}
+                        >
+                          Delete
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -436,41 +478,45 @@ export default function CustomersPage() {
               ))}
             </TableBody>
           </Table>
+
           <div className="mt-6 flex justify-center">
             <Pagination>
               <PaginationContent>
                 <PaginationItem>
                   <PaginationPrevious
                     href="#"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.max(prev - 1, 1))
-                    }
-                    className={
-                      currentPage === 1 ? "pointer-events-none opacity-50" : ""
-                    }
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setCurrentPage((prev) => Math.max(prev - 1, 1));
+                    }}
+                    className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
                   />
                 </PaginationItem>
+
                 {Array.from({ length: totalPages }, (_, i) => (
                   <PaginationItem key={i}>
                     <PaginationLink
                       href="#"
-                      onClick={() => setCurrentPage(i + 1)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage(i + 1);
+                      }}
                       isActive={i + 1 === currentPage}
                     >
                       {i + 1}
                     </PaginationLink>
                   </PaginationItem>
                 ))}
+
                 <PaginationItem>
                   <PaginationNext
                     href="#"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.min(prev + 1, totalPages))
-                    }
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+                    }}
                     className={
-                      currentPage === totalPages
-                        ? "pointer-events-none opacity-50"
-                        : ""
+                      currentPage === totalPages ? "pointer-events-none opacity-50" : ""
                     }
                   />
                 </PaginationItem>
@@ -480,8 +526,8 @@ export default function CustomersPage() {
         </>
       ) : (
         <div className="text-center text-gray-500 py-10">
-          No customers found. Try adjusting your filters or add a new customer to
-          get started.
+          No customers found. Try adjusting your filters or add a new customer to get
+          started.
         </div>
       )}
 
@@ -491,11 +537,11 @@ export default function CustomersPage() {
           <SheetHeader>
             <SheetTitle>Edit Customer</SheetTitle>
             <SheetDescription>
-              Make changes to the customer's profile here. Click save when you're
-              done.
+              Make changes to the customer's profile here. Click save when you're done.
             </SheetDescription>
           </SheetHeader>
-          {editingCustomer && (
+
+          {editingCustomer ? (
             <form onSubmit={handleEditCustomer} className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="editName" className="text-right">
@@ -510,6 +556,7 @@ export default function CustomersPage() {
                   className="col-span-3"
                 />
               </div>
+
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="editEmail" className="text-right">
                   Email
@@ -524,6 +571,7 @@ export default function CustomersPage() {
                   className="col-span-3"
                 />
               </div>
+
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="editPhone" className="text-right">
                   Phone
@@ -536,11 +584,56 @@ export default function CustomersPage() {
                   className="col-span-3"
                 />
               </div>
-              <Button type="submit">Save Changes</Button>
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsEditSheetOpen(false);
+                    setEditingCustomer(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit">Save Changes</Button>
+              </div>
             </form>
+          ) : (
+            <div className="p-4">No customer selected.</div>
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Confirm Delete AlertDialog (controlled) */}
+      <AlertDialog open={isConfirmDeleteOpen} onOpenChange={setIsConfirmDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+          </AlertDialogHeader>
+          <div className="p-4 text-sm text-muted-foreground">
+            This action cannot be undone. This will permanently delete this customer's
+            data.
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setIsConfirmDeleteOpen(false);
+                setConfirmDeleteId(null);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmDeleteId) handleDeleteCustomer(confirmDeleteId);
+              }}
+            >
+              Continue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
