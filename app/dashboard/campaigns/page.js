@@ -346,29 +346,20 @@ export default function CampaignsPage() {
   }, [campaignStats]);
 
   // Loading / auth UI
-  if (status === "loading") {
-    return (
-      <div className="p-6 max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-3">
-          <Skeleton className="h-10 w-52" />
-          <Skeleton className="h-10 w-36" />
-        </div>
-        <Separator className="my-3" />
-        <div className="grid grid-cols-3 gap-6">
-          <div className="col-span-2 space-y-3">
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-          </div>
-          <div className="space-y-3">
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-          </div>
-        </div>
+  if (status === "loading" || loading) {
+  return (
+    <div className="p-6 min-h-[480px] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <div
+          role="status"
+          aria-label="Loading dashboard"
+          className="animate-spin rounded-full border-4 border-gray-200 border-t-blue-500 w-12 h-12"
+        />
+        <span className="text-sm text-blue-600 font-medium"></span>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   if (status === "unauthenticated") {
     return (

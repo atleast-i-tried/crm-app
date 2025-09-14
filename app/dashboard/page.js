@@ -304,22 +304,20 @@ export default function DashboardHome() {
   }, [metrics.campaigns, metrics.logs]);
 
   if (status === "loading" || loading) {
-    return (
-      <div className="p-6">
-        <div className="flex justify-between items-center mb-6">
-          <Skeleton className="h-10 w-60 rounded-xl" />
-          <Skeleton className="h-10 w-40 rounded-xl" />
-        </div>
-        <div className="grid md:grid-cols-3 gap-6 mb-8">
-          <Skeleton className="h-[150px] rounded-2xl" />
-          <Skeleton className="h-[150px] rounded-2xl" />
-          <Skeleton className="h-[150px] rounded-2xl" />
-        </div>
-        <Separator className="my-8" />
-        <Skeleton className="h-[400px] w-full rounded-2xl" />
+  return (
+    <div className="p-6 min-h-[480px] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <div
+          role="status"
+          aria-label="Loading dashboard"
+          className="animate-spin rounded-full border-4 border-gray-200 border-t-blue-500 w-12 h-12"
+        />
+        <span className="text-sm text-blue-600 font-medium"></span>
       </div>
-    );
-  }
+    </div>
+  );
+}
+
 
   if (status === "unauthenticated") {
     return (

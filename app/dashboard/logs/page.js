@@ -326,25 +326,20 @@ export default function LogsPage() {
   }
 
   // ---------- UI states ----------
-  if (status === "loading") {
-    return (
-      <div className="p-6 max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-6">
-          <Skeleton className="h-10 w-60" />
-        </div>
-        <Separator className="my-6" />
-        <div className="flex space-x-2 mb-4">
-          <Skeleton className="h-8 w-[200px]" />
-          <Skeleton className="h-8 w-[200px]" />
-        </div>
-        <div className="space-y-2">
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-        </div>
+  if (status === "loading" || loading) {
+  return (
+    <div className="p-6 min-h-[480px] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <div
+          role="status"
+          aria-label="Loading dashboard"
+          className="animate-spin rounded-full border-4 border-gray-200 border-t-blue-500 w-12 h-12"
+        />
+        <span className="text-sm text-blue-600 font-medium"></span>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   if (status === "unauthenticated") {
     return (
