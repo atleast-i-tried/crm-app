@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useSession } from "next-auth/react";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -46,18 +45,35 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MoreHorizontal } from "lucide-react";
 
+/**
+ * Campaign Logs page — rewritten
+ *
+ * Key features:
+ *  - Normalizes campaign objects and creator emails
+ *  - Groups logs by campaign name
+ *  - Adds "Simulate Send" action that will POST to /api/vendor/send-message
+ *    for every customer matched by the campaign filters & logic (client-side filter),
+ *    then refreshes logs.
+ *
+ * NOTE: This relies on your existing /api/vendor/send-message to accept:
+ *  { campaignId, customerId, message }
+ *
+ * Copy-paste this file into your page and it should work (assuming your APIs exist).
+ */
+
 export default function LogsPage() {
   const { status } = useSession();
 
   // data
   const [logs, setLogs] = useState([]);
-  const [campaignsMap, setCampaignsMap] = useState({});
+  const [campaignsMap, setCampaignsMap] = useState({}); // map by id
+  const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // UI state
   const [filters, setFilters] = useState({ campaignName: "" });
   const [currentPage, setCurrentPage] = useState(1);
-  const logsPerPage = 11; // per your request
+  const logsPerPage = 11;
 
   // selected campaign details
   const [selectedCampaignLogs, setSelectedCampaignLogs] = useState(null);
@@ -72,6 +88,10 @@ export default function LogsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [campaignToDelete, setCampaignToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+
+  // simulate flow
+  const [simulating, setSimulating] = useState(false);
+  const [simulateProgress, setSimulateProgress] = useState({ sent: 0, total: 0 });
 
   // ---------- Helpers ----------
   function extractEmail(value) {
@@ -104,37 +124,71 @@ export default function LogsPage() {
     return null;
   }
 
+  // Re-usable filter applicator (same logic as campaign creator)
+  const applyFiltersToCustomers = (customerList = [], filters = [], logic = "AND") => {
+    if (!filters || filters.length === 0) return customerList || [];
+
+    return (customerList || []).filter((c) => {
+      const results = filters.map((f) => {
+        switch (f.key) {
+          case "minSpend":
+            return (c.totalSpend || 0) >= (Number(f.value) || 0);
+          case "minVisits":
+            return (c.visits || 0) >= (Number(f.value) || 0);
+          case "inactiveDays":
+            if (!f.value && f.value !== 0) return true;
+            if (!c.lastActive) return false;
+            return (
+              (new Date() - new Date(c.lastActive)) / (1000 * 60 * 60 * 24) >= Number(f.value)
+            );
+          default:
+            return true;
+        }
+      });
+      return logic === "AND" ? results.every(Boolean) : results.some(Boolean);
+    });
+  };
+
   // ---------- Fetch & normalize ----------
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [logsRes, campaignsRes] = await Promise.all([fetch("/api/logs"), fetch("/api/campaigns")]);
+      const [logsRes, campaignsRes, customersRes] = await Promise.all([
+        fetch("/api/logs"),
+        fetch("/api/campaigns"),
+        fetch("/api/customers"),
+      ]);
 
       if (!logsRes.ok) throw new Error("Failed to fetch logs");
       if (!campaignsRes.ok) throw new Error("Failed to fetch campaigns");
+      if (!customersRes.ok) throw new Error("Failed to fetch customers");
 
-      const [logsData, campaignsData] = await Promise.all([logsRes.json(), campaignsRes.json()]);
+      const [logsData, campaignsData, customersData] = await Promise.all([
+        logsRes.json(),
+        campaignsRes.json(),
+        customersRes.json(),
+      ]);
 
-      // build campaign map with normalized _creatorEmail
+      // build campaign map with normalized creator email
       const map = {};
       if (Array.isArray(campaignsData)) {
         campaignsData.forEach((c) => {
-          if (c && c._id) {
-            const creatorEmail =
-              extractEmail(c.createdBy) || extractEmail(c.createdByEmail) || extractEmail(c.creator) || null;
-            map[String(c._id)] = { ...c, _creatorEmail: creatorEmail };
+          if (c && (c._id || c.id)) {
+            const id = String(c._id ?? c.id);
+            const creatorEmail = extractEmail(c.createdBy) || extractEmail(c.createdByEmail) || null;
+            map[id] = { ...c, _creatorEmail: creatorEmail };
           }
         });
       }
 
       // normalize logs: ensure .campaign is an object with name, _id, createdByEmail
-      const normalized = (Array.isArray(logsData) ? logsData : []).map((l) => {
+      const normalizedLogs = (Array.isArray(logsData) ? logsData : []).map((l) => {
         const out = { ...l };
         let campaignObj = null;
 
         if (out.campaign && typeof out.campaign === "object") {
           campaignObj = {
-            _id: out.campaign._id || (out.campaign?._id ? String(out.campaign._id) : null),
+            _id: out.campaign._id ?? out.campaign.id ?? null,
             name: out.campaign.name || out.campaign.campaignName || out.campaignName || "Unknown Campaign",
             createdByEmail:
               extractEmail(out.campaign.createdBy) ||
@@ -157,7 +211,7 @@ export default function LogsPage() {
             ...(found || {}),
           };
         } else {
-          const maybeId = out.campaignId || (out.campaign && out.campaign._id) || null;
+          const maybeId = out.campaignId || null;
           campaignObj = {
             _id: maybeId || null,
             name: out.campaignName || "Unknown Campaign",
@@ -174,7 +228,8 @@ export default function LogsPage() {
       });
 
       setCampaignsMap(map);
-      setLogs(normalized);
+      setLogs(normalizedLogs);
+      setCustomers(Array.isArray(customersData) ? customersData : []);
     } catch (err) {
       console.error(err);
       toast.error(err?.message || "Failed to load logs");
@@ -258,7 +313,6 @@ export default function LogsPage() {
       toast.success("Campaign deleted");
       setDeleteDialogOpen(false);
       setCampaignToDelete(null);
-      // if we were viewing this campaign's details, go back to list
       if (selectedCampaignLogs && selectedCampaignLogs[0]?.campaign?._id === campaignToDelete.id) {
         setSelectedCampaignLogs(null);
       }
@@ -325,21 +379,86 @@ export default function LogsPage() {
     }
   }
 
+  // ---------- Simulation: send messages to matched customers only ----------
+  // This will compute matched customers client-side using campaign.filters & logic,
+  // then POST to /api/vendor/send-message for each matched customer.
+  // After all requests resolve, we refresh logs to show the new entries.
+  async function simulateSendForGroup(group) {
+    // group: { name, id, createdBy, logs }
+    if (!group) return;
+    const campaignId = group.id;
+    if (!campaignId) {
+      toast.error("Cannot simulate: campaign id is missing.");
+      return;
+    }
+
+    // retrieve campaign object if available in campaignsMap
+    const campaignObj = campaignsMap[String(campaignId)] || null;
+
+    // fallback: infer minimal filters & message from existing logs if campaignObj missing
+    const campaignFilters = (campaignObj && campaignObj.filters) || [];
+    const campaignLogic = (campaignObj && (campaignObj.logic || "AND")) || "AND";
+    const campaignMessage = (campaignObj && campaignObj.message) || (group.logs?.[0]?.message) || "Promotional message";
+
+    // compute matched customers using same filter logic as campaign creation
+    const matchedCustomers = applyFiltersToCustomers(customers, campaignFilters, campaignLogic);
+
+    if (!matchedCustomers.length) {
+      toast.error("No customers match this campaign's filters. Nothing to simulate.");
+      return;
+    }
+
+    // Run simulation: post to vendor/send-message for each matched customer
+    setSimulating(true);
+    setSimulateProgress({ sent: 0, total: matchedCustomers.length });
+    try {
+      // send sequentially to allow progress updates (you can parallelize if you prefer)
+      for (let i = 0; i < matchedCustomers.length; i++) {
+        const cust = matchedCustomers[i];
+        try {
+          await fetch("/api/vendor/send-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              campaignId,
+              customerId: cust._id || cust.id,
+              message: campaignMessage,
+            }),
+          });
+        } catch (e) {
+          // log but continue
+          console.error("vendor/send-message error for", cust._id, e);
+        }
+        setSimulateProgress((p) => ({ ...p, sent: p.sent + 1 }));
+      }
+
+      toast.success(`Simulated send to ${matchedCustomers.length} customers.`);
+      // refresh logs so UI shows the newly created logs
+      await fetchAll();
+    } catch (err) {
+      console.error(err);
+      toast.error("Simulation failed: " + (err?.message || "unknown"));
+    } finally {
+      setSimulating(false);
+      setSimulateProgress({ sent: 0, total: 0 });
+    }
+  }
+
   // ---------- UI states ----------
   if (status === "loading" || loading) {
-  return (
-    <div className="p-6 min-h-[480px] flex items-center justify-center">
-      <div className="flex flex-col items-center gap-4">
-        <div
-          role="status"
-          aria-label="Loading dashboard"
-          className="animate-spin rounded-full border-4 border-gray-200 border-t-blue-500 w-12 h-12"
-        />
-        <span className="text-sm text-blue-600 font-medium"></span>
+    return (
+      <div className="p-6 min-h-[480px] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div
+            role="status"
+            aria-label="Loading"
+            className="animate-spin rounded-full border-4 border-gray-200 border-t-blue-500 w-12 h-12"
+          />
+          <span className="text-sm text-blue-600 font-medium">Loading...</span>
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
   if (status === "unauthenticated") {
     return (
@@ -390,7 +509,7 @@ export default function LogsPage() {
           </TableHeader>
           <TableBody>
             {selectedCampaignLogs.map((l) => (
-              <TableRow key={l._id}>
+              <TableRow key={l._id || `${l.customer?._id}-${l.createdAt || ""}`}>
                 <TableCell className="font-medium">{l.customer?.name || "Unknown"}</TableCell>
                 <TableCell>
                   <Badge variant={String(l.status).toUpperCase() === "SENT" ? "success" : "destructive"}>
@@ -457,8 +576,7 @@ export default function LogsPage() {
             <Input placeholder="Filter campaign name..." name="campaignName" value={filters.campaignName} onChange={handleFilterChange} />
           </PopoverContent>
         </Popover>
-
-        {/* status filter intentionally removed per request */}
+        {/* status filter intentionally removed */}
       </div>
 
       {loading ? (
@@ -476,7 +594,7 @@ export default function LogsPage() {
                 <TableHead>Created By</TableHead>
                 <TableHead>Audience Size</TableHead>
                 <TableHead>Date</TableHead>
-                <TableHead>Action</TableHead>
+                <TableHead className="text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -484,7 +602,7 @@ export default function LogsPage() {
                 const createdBy = group.createdBy || "Unknown";
                 return (
                   <TableRow
-                    key={group.name}
+                    key={group.name + (group.id || "")}
                     className="cursor-pointer hover:bg-slate-100 dark:hover:bg-gray-800 transition"
                     onClick={() => handleCampaignClick(group.name)}
                   >
@@ -492,7 +610,8 @@ export default function LogsPage() {
                     <TableCell>{createdBy}</TableCell>
                     <TableCell>{group.logs.length}</TableCell>
                     <TableCell>{group.logs?.[0]?.createdAt ? new Date(group.logs[0].createdAt).toLocaleDateString() : "-"}</TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
+
+                    <TableCell onClick={(e) => e.stopPropagation()} className="text-right pr-4">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon" aria-label="Actions">
@@ -501,10 +620,30 @@ export default function LogsPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
+                            onClick={() => {
+                              // confirm delete
+                              confirmDeleteCampaign(group);
+                            }}
                             className="text-destructive"
-                            onClick={() => confirmDeleteCampaign(group)}
                           >
                             Delete
+                          </DropdownMenuItem>
+
+                          <DropdownMenuItem
+                            onClick={async () => {
+                              // avoid propagation and run simulate
+                              await simulateSendForGroup(group);
+                            }}
+                          >
+                            {simulating && campaignToDelete?.id === group.id ? "Simulating..." : "Simulate Send"}
+                          </DropdownMenuItem>
+
+                          <DropdownMenuItem
+                            onClick={() => {
+                              handleSummarizeCampaign(group);
+                            }}
+                          >
+                            Summary
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>

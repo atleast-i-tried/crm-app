@@ -72,6 +72,9 @@ export default function CampaignsPage() {
   // Drawer toggle for recent campaigns (hidden by default)
   const [recentOpen, setRecentOpen] = useState(false);
 
+  // Big-sized toast state (new)
+  const [showBigToast, setShowBigToast] = useState(false);
+
   const filterOptions = [
     { label: "Min. Spend", key: "minSpend" },
     { label: "Min. Visits", key: "minVisits" },
@@ -207,7 +210,14 @@ export default function CampaignsPage() {
       });
       setAudienceSize(0);
       setAiSuggestions([]);
+
+      // keep existing sonner toast
       toast.success("Campaign launched successfully!");
+
+      // show the big-sized toast (new)
+      setShowBigToast(true);
+      // auto-dismiss after 4 seconds
+      setTimeout(() => setShowBigToast(false), 4000);
     } catch (error) {
       toast.error(error.message || "Failed to create campaign");
     }
@@ -347,19 +357,19 @@ export default function CampaignsPage() {
 
   // Loading / auth UI
   if (status === "loading" || loading) {
-  return (
-    <div className="p-6 min-h-[480px] flex items-center justify-center">
-      <div className="flex flex-col items-center gap-4">
-        <div
-          role="status"
-          aria-label="Loading dashboard"
-          className="animate-spin rounded-full border-4 border-gray-200 border-t-blue-500 w-12 h-12"
-        />
-        <span className="text-sm text-blue-600 font-medium"></span>
+    return (
+      <div className="p-6 min-h-[480px] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div
+            role="status"
+            aria-label="Loading dashboard"
+            className="animate-spin rounded-full border-4 border-gray-200 border-t-blue-500 w-12 h-12"
+          />
+          <span className="text-sm text-blue-600 font-medium"></span>
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
   if (status === "unauthenticated") {
     return (
@@ -758,6 +768,40 @@ export default function CampaignsPage() {
           </DialogContent>
         )}
       </Dialog>
+
+      {/* Big-sized toast UI (moved to top-right) */}
+      <AnimatePresence>
+        {showBigToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.18 }}
+            className="fixed right-6 top-6 z-60"
+            aria-live="polite"
+          >
+            <div className="w-[420px] max-w-[calc(100%-32px)] rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 flex items-start gap-4">
+              <div className="flex-1">
+                <div className="text-sm text-gray-500">Campaign Status</div>
+                <div className="mt-1 text-base font-semibold text-gray-900 dark:text-gray-100">Campaign Created Successfully</div>
+                <div className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                  Your campaign has been launched and will be processed in the background. You can view it in Campaigns Logs.
+                </div>
+              </div>
+              <div className="flex items-start">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowBigToast(false)}
+                  aria-label="Close big toast"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

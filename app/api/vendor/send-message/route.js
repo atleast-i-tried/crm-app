@@ -9,7 +9,7 @@ export async function POST(req) {
     }
 
     // Simulate real-world delivery with ~90% success rate
-    const isSent = Math.random() < 0.9;
+    const isSent = Math.random() < 0.7;
     const status = isSent ? "SENT" : "FAILED";
     const vendorResponse = isSent ? "Simulated delivery success." : "Simulated delivery failure.";
 
