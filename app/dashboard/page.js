@@ -132,8 +132,56 @@ function TopCustomerCard({ topCustomer }) {
   );
 }
 
+function LatestCampaignCard({ campaign, logs }) {
+  const reached = Array.isArray(logs) ? logs.length : 0;
+  const successRate =
+    reached > 0
+      ? Math.round((logs.filter((l) => String(l.status).toUpperCase() === "SENT").length / reached) * 100 * 10) / 10
+      : null;
+  const createdBy = campaign?.createdBy || "Unknown";
+
+  return (
+    <motion.div
+      variants={cardVariants}
+      initial="hidden"
+      animate="visible"
+      whileHover="hover"
+      className="relative overflow-hidden rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800 shadow-lg p-5"
+      role="article"
+      aria-label="Latest campaign"
+    >
+      <div className="pointer-events-none absolute -top-10 -right-12 h-36 w-36 opacity-8 blur-2xl bg-gradient-to-br from-indigo-400 to-blue-500" />
+      <div className="flex items-start justify-between relative z-10">
+        <div className="pr-4 max-w-lg">
+          <div className="text-xs font-medium text-slate-500">Latest Campaign</div>
+          <div className="mt-2 text-lg font-extrabold tracking-tight">{campaign?.name || "No campaigns yet"}</div>
+
+          <div className="mt-2 text-sm text-slate-500">
+            Reached <span className="font-semibold">{reached}</span> users
+          </div>
+
+          <div className="mt-3 flex items-center gap-3">
+           
+            <div className="text-xs text-slate-400">Created by {createdBy}</div>
+          </div>
+        </div>
+
+        <div className="ml-4 flex flex-col items-end space-y-2">
+          <div className="p-2 rounded-md bg-slate-100 dark:bg-slate-800">
+            <Mail className="h-5 w-5 text-slate-700" />
+          </div>
+          <div className="text-xs text-slate-400">Most recent</div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function isSameLocalDay(d1, d2) {
+  return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth() && d1.getDate() === d2.getDate();
+}
+
 export default function DashboardHome() {
-  // hooks first
   const { data: session, status } = useSession();
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState({ customers: [], orders: [], campaigns: [], logs: [] });
@@ -161,7 +209,12 @@ export default function DashboardHome() {
         logsRes.json(),
       ]);
 
-      setMetrics({ customers: customersData, orders: ordersData, campaigns: campaignsData, logs: logsData });
+      setMetrics({
+        customers: customersData || [],
+        orders: ordersData || [],
+        campaigns: campaignsData || [],
+        logs: logsData || [],
+      });
     } catch (error) {
       toast.error("An error occurred while fetching dashboard data.");
       console.error(error);
@@ -175,7 +228,6 @@ export default function DashboardHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
-  // CHART DATA
   const chartData = useMemo(() => {
     const recentCampaigns = metrics.campaigns
       .slice()
@@ -183,17 +235,28 @@ export default function DashboardHome() {
       .slice(0, 5);
 
     return recentCampaigns.map((campaign) => {
-      const relatedLogs = metrics.logs.filter((log) => log.campaign?._id === campaign._id);
-      const sent = relatedLogs.filter((log) => log.status === "SENT").length;
+      const relatedLogs = metrics.logs.filter((log) => {
+        const logCampaignId =
+          (log.campaign && (log.campaign._id ?? log.campaign)) || log.campaignId || log.campaign?._id || null;
+        const campId = campaign._id ?? campaign.id;
+        return String(logCampaignId) === String(campId);
+      });
+      const sent = relatedLogs.filter((log) => String(log.status).toUpperCase() === "SENT").length;
       const failed = relatedLogs.length - sent;
-      return { name: campaign.name, sent, failed };
+      return { name: campaign.name || "Campaign", sent, failed };
     });
   }, [metrics]);
 
-  // totalRevenue
-  const totalRevenue = useMemo(() => metrics.orders.reduce((sum, o) => sum + (o.amount || 0), 0), [metrics.orders]);
+  const totalRevenue = useMemo(() => metrics.orders.reduce((sum, o) => sum + (Number(o.amount) || 0), 0), [metrics.orders]);
 
-  // TOP CUSTOMER
+  const todayRevenue = useMemo(() => {
+    const today = new Date();
+    return metrics.orders.reduce((sum, o) => {
+      const ts = new Date(o.createdAt || o.updatedAt || 0);
+      return isSameLocalDay(ts, today) ? sum + (Number(o.amount) || 0) : sum;
+    }, 0);
+  }, [metrics.orders]);
+
   const topCustomer = useMemo(() => {
     if (!metrics.orders.length || !metrics.customers.length) return null;
 
@@ -209,14 +272,14 @@ export default function DashboardHome() {
       cid = cid ?? "_unknown_";
 
       const prev = map.get(cid) ?? { revenue: 0, ordersCount: 0 };
-      prev.revenue += order.amount || 0;
+      prev.revenue += Number(order.amount) || 0;
       prev.ordersCount += 1;
       map.set(cid, prev);
     }
 
     let best = { id: null, revenue: 0, ordersCount: 0, name: null };
     for (const [id, stats] of map.entries()) {
-      const cust = metrics.customers.find((c) => c._id === id || c.id === id);
+      const cust = metrics.customers.find((c) => String(c._id) === String(id) || String(c.id) === String(id));
       const name = cust ? cust.name ?? cust.fullName ?? cust.email ?? "Customer" : id === "_unknown_" ? "Unknown" : id;
       if (stats.revenue > best.revenue) {
         best = { id, revenue: stats.revenue, ordersCount: stats.ordersCount, name };
@@ -227,7 +290,19 @@ export default function DashboardHome() {
     return { ...best, totalRevenue: totalRevenue || 0 };
   }, [metrics.orders, metrics.customers, totalRevenue]);
 
-  // EARLY RETURNS
+  const latestCampaignWithLogs = useMemo(() => {
+    if (!metrics.campaigns || metrics.campaigns.length === 0) return { campaign: null, logs: [] };
+    const sorted = metrics.campaigns.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const latest = sorted[0];
+    const campId = latest._id ?? latest.id;
+    const relatedLogs = metrics.logs.filter((log) => {
+      const logCampaignId =
+        (log.campaign && (log.campaign._id ?? log.campaign)) || log.campaignId || log.campaign?._id || null;
+      return String(logCampaignId) === String(campId);
+    });
+    return { campaign: latest, logs: relatedLogs };
+  }, [metrics.campaigns, metrics.logs]);
+
   if (status === "loading" || loading) {
     return (
       <div className="p-6">
@@ -257,7 +332,6 @@ export default function DashboardHome() {
     );
   }
 
-  // MAIN RENDER
   return (
     <motion.div initial="hidden" animate="visible" variants={fadeIn} className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
@@ -279,11 +353,11 @@ export default function DashboardHome() {
       {/* Top stats row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
         <StatCard
-          title="Total Revenue"
-          value={`₹${totalRevenue}`}
-          subtitle="Trending up this month — Visitors for the last 6 months"
+          title="Today's Revenue"
+          value={`₹${todayRevenue}`}
+          subtitle="Revenue collected today"
           icon={<svg className="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none"><path d="M12 8v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M8 12h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-          trend={{ text: "+12.5%", tone: "positive" }}
+          trend={{ text: "Live", tone: "neutral" }}
         />
 
         <StatCard
@@ -296,13 +370,7 @@ export default function DashboardHome() {
 
         <TopCustomerCard topCustomer={topCustomer} />
 
-        <StatCard
-          title="Growth Rate"
-          value="4.5%"
-          subtitle="Steady performance increase"
-          icon={<svg className="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none"><path d="M3 12h4l4-8 4 16 4-10h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-          trend={{ text: "+4.5%", tone: "neutral" }}
-        />
+        <LatestCampaignCard campaign={latestCampaignWithLogs.campaign} logs={latestCampaignWithLogs.logs} />
       </div>
 
       {/* Main content */}

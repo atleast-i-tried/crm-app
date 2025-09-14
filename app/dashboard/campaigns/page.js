@@ -36,6 +36,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+import { motion, AnimatePresence } from "framer-motion";
+
 export default function CampaignsPage() {
   const { data: session, status } = useSession();
   const [campaigns, setCampaigns] = useState([]);
@@ -337,6 +339,9 @@ export default function CampaignsPage() {
     return [...(campaignStats || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 3);
   }, [campaignStats]);
 
+  // NEW: panel open state for recent campaigns (hidden by default)
+  const [recentOpen, setRecentOpen] = useState(false);
+
   if (status === "loading") {
     return (
       <div className="p-6 max-w-7xl mx-auto">
@@ -373,19 +378,27 @@ export default function CampaignsPage() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-6 max-w-7xl mx-auto relative">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold">Create Campaign</h1>
-        <div className="text-sm text-gray-500">Design your audience, craft the message, and launch.</div>
+        <div>
+          <h1 className="text-3xl font-bold">Create Campaign</h1>
+          <div className="text-sm text-gray-500 mt-1">Design your audience, craft the message, and launch.</div>
+        </div>
+        <div className="hidden sm:flex items-center gap-4">
+          <Button variant="ghost" onClick={() => { setRecentOpen((v) => !v); }}>
+            <EllipsisVertical className="mr-2 h-4 w-4" />
+            <span className="hidden sm:inline">Recent</span>
+          </Button>
+        </div>
       </div>
 
       <Separator className="my-6" />
 
-      {/* Main layout: left = create form, right = recent campaigns */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Main layout: left = create form */}
+      <div className="grid grid-cols-1 gap-6">
         {/* Left: Create Campaign (visible inline, replaces dialog) */}
         <div className="lg:col-span-2">
-          <form onSubmit={handleAddCampaign} className="space-y-6 bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm">
+          <form onSubmit={handleAddCampaign} className="space-y-6 bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-xl transition-shadow">
             {/* Name */}
             <div className="grid grid-cols-4 items-center gap-4">
               <Label htmlFor="name" className="text-right">
@@ -449,7 +462,7 @@ export default function CampaignsPage() {
             <div className="space-y-4">
               <h4 className="text-sm font-semibold text-gray-500">AI Message Suggestions</h4>
 
-              <Card>
+              <Card className="shadow-md">
                 <CardHeader>
                   <CardTitle>AI Message Assistant</CardTitle>
                 </CardHeader>
@@ -504,76 +517,126 @@ export default function CampaignsPage() {
             </Button>
           </form>
         </div>
-
-        {/* Right: Recent campaigns */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Recent Campaigns</h2>
-            <span className="text-sm text-gray-500">Latest 3</span>
-          </div>
-
-          {loading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-20 w-full" />
-              <Skeleton className="h-20 w-full" />
-              <Skeleton className="h-20 w-full" />
-            </div>
-          ) : recentCampaigns.length > 0 ? (
-            recentCampaigns.map((c) => (
-              <Card key={c._id} className="shadow-sm">
-                <CardContent className="p-4 flex items-start gap-3">
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-medium">{c.name}</h3>
-                      <div onClick={(e) => e.stopPropagation()}>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" className="h-8 w-8 p-0">
-                              <span className="sr-only">Open menu</span>
-                              <EllipsisVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setConfirmDeleteId(c._id);
-                                setConfirmDeleteOpen(true);
-                              }}
-                            >
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 flex items-center gap-2">
-                      <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">
-                        {c.successRate}% success
-                      </Badge>
-                      <Badge className="bg-red-50 text-red-700 dark:bg-red-800 dark:text-red-200">{c.failedRate}% failed</Badge>
-                      <span className="text-xs text-gray-400 ml-auto">{new Date(c.createdAt).toLocaleDateString()}</span>
-                    </div>
-                    <div className="mt-3">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedCampaign(c);
-                        }}
-                      >
-                        View
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <div className="text-sm text-gray-500">No recent campaigns. Launch one from the left.</div>
-          )}
-        </div>
       </div>
+
+      {/* Floating toggle button on the right (visible on all sizes) */}
+      <div className="fixed right-6 bottom-8 z-50">
+        <button
+          onClick={() => setRecentOpen((v) => !v)}
+          aria-expanded={recentOpen}
+          aria-controls="recent-campaigns-drawer"
+          className="flex items-center gap-2 px-4 py-2 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-100 dark:border-gray-700 hover:shadow-2xl transition"
+        >
+          <EllipsisVertical className="h-4 w-4" />
+          <span className="hidden sm:inline text-sm font-medium">Recent campaigns</span>
+        </button>
+      </div>
+
+      {/* Drawer: recent campaigns panel (slides in from right) */}
+      <AnimatePresence>
+        {recentOpen && (
+          <>
+            {/* backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.35 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setRecentOpen(false)}
+              className="fixed inset-0 z-40 bg-black"
+            />
+
+            <motion.aside
+              id="recent-campaigns-drawer"
+              initial={{ x: 400 }}
+              animate={{ x: 0 }}
+              exit={{ x: 400 }}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              className="fixed right-0 top-0 z-50 h-full w-[28rem] max-w-full bg-white dark:bg-gray-900 shadow-2xl p-6 overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">Recent Campaigns</h2>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-500">Latest 3</span>
+                  <Button variant="ghost" size="icon" onClick={() => setRecentOpen(false)} aria-label="Close recent campaigns">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {loading ? (
+                  <>
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-20 w-full" />
+                  </>
+                ) : recentCampaigns.length > 0 ? (
+                  recentCampaigns.map((c) => (
+                    <motion.div
+                      key={c._id}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
+                      transition={{ duration: 0.18 }}
+                    >
+                      <Card className="shadow-sm">
+                        <CardContent className="p-4 flex items-start gap-3">
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between">
+                              <h3 className="text-sm font-medium">{c.name}</h3>
+                              <div onClick={(e) => e.stopPropagation()}>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" className="h-8 w-8 p-0">
+                                      <span className="sr-only">Open menu</span>
+                                      <EllipsisVertical className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setConfirmDeleteId(c._id);
+                                        setConfirmDeleteOpen(true);
+                                      }}
+                                    >
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 flex items-center gap-2">
+                              <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">
+                                {c.successRate}% success
+                              </Badge>
+                              <Badge className="bg-red-50 text-red-700 dark:bg-red-800 dark:text-red-200">{c.failedRate}% failed</Badge>
+                              <span className="text-xs text-gray-400 ml-auto">{new Date(c.createdAt).toLocaleDateString()}</span>
+                            </div>
+                            <div className="mt-3">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedCampaign(c);
+                                }}
+                              >
+                                View
+                              </Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </motion.div>
+                  ))
+                ) : (
+                  <div className="text-sm text-gray-500">No recent campaigns. Launch one from the left.</div>
+                )}
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Top-level delete confirmation dialog (controlled) */}
       <AlertDialog

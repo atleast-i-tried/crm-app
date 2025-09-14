@@ -51,6 +51,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
@@ -61,25 +63,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-
-// Icon for sorting arrows
-const SortIcon = ({ className }) => (
-  <svg
-    className={className}
-    xmlns="http://www.w3.org/2000/svg"
-    width="24"
-    height="24"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="m7 15 5 5 5-5" />
-    <path d="m7 9 5-5 5 5" />
-  </svg>
-);
 
 /** Safe timestamp extraction helper (ObjectId -> ms) */
 function idToTimestampMs(id) {
@@ -251,27 +234,20 @@ export default function OrdersPage() {
       const createdOrder = await res.json().catch(() => null);
 
       if (createdOrder && createdOrder._id) {
-        // Find the full customer object from the already-loaded customers state
         const customerDetails = customers.find(
           (c) => c._id === newOrder.customerId
         );
-
-        // Manually create a complete order object to display instantly
         const populatedOrder = {
           ...createdOrder,
-          customer: customerDetails || null, // Add the customer object
+          customer: customerDetails || null,
         };
-
-        // Update the orders state with the fully populated new order
         setOrders((prev) => [populatedOrder, ...prev]);
       } else {
-        await fetchOrders(); // Fallback to refetch all if creation response is weird
+        await fetchOrders();
       }
 
       setNewOrder({ customerId: "", amount: "" });
       toast.success("Order added successfully!");
-
-      // Reset filters and sorting to default
       setFilters({ searchTerm: "" });
       setSortConfig({ key: "date", direction: "descending" });
       setCurrentPage(1);
@@ -313,18 +289,9 @@ export default function OrdersPage() {
     }
   };
 
-  const requestSort = (key) => {
-    let direction = "ascending";
-    if (sortConfig.key === key && sortConfig.direction === "ascending") {
-      direction = "descending";
-    }
-    setSortConfig({ key, direction });
-  };
-
   const sortedAndFilteredOrders = useMemo(() => {
     let sortableItems = [...orders];
 
-    // Filtering
     const searchTerm = (filters.searchTerm || "").toLowerCase();
     if (searchTerm) {
       sortableItems = sortableItems.filter((o) => {
@@ -338,16 +305,11 @@ export default function OrdersPage() {
       });
     }
 
-    // Sorting
     if (sortConfig.key !== null) {
       sortableItems.sort((a, b) => {
         let aValue, bValue;
 
         switch (sortConfig.key) {
-          case "customer":
-            aValue = a.customer?.name || "";
-            bValue = b.customer?.name || "";
-            break;
           case "amount":
             aValue = a.amount;
             bValue = b.amount;
@@ -381,6 +343,7 @@ export default function OrdersPage() {
     1,
     Math.ceil(sortedAndFilteredOrders.length / ordersPerPage)
   );
+
   const currentOrders = useMemo(() => {
     const start = (currentPage - 1) * ordersPerPage;
     return sortedAndFilteredOrders.slice(start, start + ordersPerPage);
@@ -395,39 +358,11 @@ export default function OrdersPage() {
     return sortNewestFirst(list);
   }, [customers, customerFilter]);
 
-  const getSortIndicator = (key) => {
-    if (sortConfig.key !== key) {
-      return (
-        <SortIcon className="inline-block w-4 h-4 ml-1 text-gray-400" />
-      );
-    }
-    if (sortConfig.direction === "ascending") {
-      return (
-        <svg
-          className="inline-block w-4 h-4 ml-1"
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <path d="m18 15-6-6-6 6" />
-        </svg>
-      );
-    }
-    return (
-      <svg
-        className="inline-block w-4 h-4 ml-1"
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <path d="m6 9 6 6 6-6" />
-      </svg>
-    );
-  };
+  const sortOptions = [
+    { value: "original", label: "Original", key: "date", direction: "descending" },
+    { value: "amount_asc", label: "Amount: Low to High", key: "amount", direction: "ascending" },
+    { value: "amount_desc", label: "Amount: High to Low", key: "amount", direction: "descending" },
+  ];
 
   if (status === "loading") {
     return (
@@ -438,6 +373,7 @@ export default function OrdersPage() {
         </div>
         <Separator className="my-6" />
         <div className="flex space-x-2 mb-4">
+          <Skeleton className="h-8 w-[200px]" />
           <Skeleton className="h-8 w-[200px]" />
         </div>
         <div className="space-y-2">
@@ -555,10 +491,10 @@ export default function OrdersPage() {
 
       <Separator className="my-6" />
 
-      <div className="flex flex-col md:flex-row gap-4 mb-4">
+      <div className="flex justify-between items-center gap-4 mb-4">
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" className="w-full md:w-auto">
+            <Button variant="outline">
               Filter by Customer or Email
             </Button>
           </PopoverTrigger>
@@ -571,6 +507,28 @@ export default function OrdersPage() {
             />
           </PopoverContent>
         </Popover>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">Sort</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuLabel>Sort Options</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {sortOptions.map((option) => (
+              <DropdownMenuItem
+                key={option.value}
+                onSelect={() =>
+                  setSortConfig({
+                    key: option.key,
+                    direction: option.direction,
+                  })
+                }
+              >
+                {option.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {loading ? (
@@ -584,26 +542,11 @@ export default function OrdersPage() {
           <Table>
             <TableHeader>
               <TableRow className="bg-gray-100 dark:bg-gray-800">
-                <TableHead
-                  className="cursor-pointer"
-                  onClick={() => requestSort("customer")}
-                >
-                  Customer {getSortIndicator("customer")}
-                </TableHead>
+                <TableHead>Customer</TableHead>
                 <TableHead>Email</TableHead>
-                <TableHead
-                  className="cursor-pointer"
-                  onClick={() => requestSort("amount")}
-                >
-                  Amount {getSortIndicator("amount")}
-                </TableHead>
+                <TableHead>Amount</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead
-                  className="cursor-pointer"
-                  onClick={() => requestSort("date")}
-                >
-                  Date {getSortIndicator("date")}
-                </TableHead>
+                <TableHead>Date</TableHead>
                 <TableHead>Time</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>

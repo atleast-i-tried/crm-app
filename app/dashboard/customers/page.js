@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { toast, Toaster } from "sonner"; // <-- imported Toaster
+import { toast, Toaster } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -28,6 +28,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -89,8 +91,9 @@ export default function CustomersPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
 
-  // Filters & pagination
-  const [filters, setFilters] = useState({ name: "", email: "", phone: "" });
+  // Filters, sorting & pagination
+  const [filters, setFilters] = useState({ searchTerm: "" });
+  const [sortConfig, setSortConfig] = useState({ key: "original", order: "desc" });
   const [currentPage, setCurrentPage] = useState(1);
   const customersPerPage = 15;
 
@@ -100,7 +103,6 @@ export default function CustomersPage() {
       const res = await fetch("/api/customers");
       if (!res.ok) throw new Error("Failed to fetch customers");
       const data = await res.json();
-      // Sort newest first before setting
       setCustomers(sortCustomersNewestFirst(data || []));
     } catch (error) {
       toast.error(error.message || "Unable to load customers");
@@ -126,8 +128,7 @@ export default function CustomersPage() {
   };
 
   const handleFilterChange = (e) => {
-    const { name, value } = e.target;
-    setFilters((p) => ({ ...p, [name]: value }));
+    setFilters({ searchTerm: e.target.value });
     setCurrentPage(1);
   };
 
@@ -146,20 +147,15 @@ export default function CustomersPage() {
         throw new Error(errorData.error || "Failed to add customer");
       }
 
-      // Try to use returned created customer to avoid extra fetch if API returns it
       const created = await res.json().catch(() => null);
-
       if (created && created._id) {
-        // Prepend and keep sorted
         setCustomers((prev) => sortCustomersNewestFirst([created, ...prev]));
       } else {
-        // Fallback: refresh list
         await fetchCustomers();
       }
 
       setNewCustomer({ name: "", email: "", phone: "" });
       toast.success("Customer added successfully!");
-      // ensure we are on first page so the new entry is visible
       setCurrentPage(1);
     } catch (error) {
       toast.error(error.message || "Failed to add customer");
@@ -182,14 +178,11 @@ export default function CustomersPage() {
       }
 
       const updated = await res.json().catch(() => null);
-
       if (updated && updated._id) {
-        // Replace updated in state and keep sorted
         setCustomers((prev) =>
           sortCustomersNewestFirst(prev.map((c) => (c._id === updated._id ? updated : c)))
         );
       } else {
-        // fallback: refresh
         await fetchCustomers();
       }
 
@@ -214,7 +207,6 @@ export default function CustomersPage() {
         throw new Error(errorData.error || "Failed to delete customer");
       }
 
-      // remove from state
       setCustomers((prev) => prev.filter((c) => c._id !== customerId));
       toast.success("Customer deleted successfully!");
     } catch (error) {
@@ -224,25 +216,54 @@ export default function CustomersPage() {
 
   const filteredCustomers = useMemo(() => {
     return customers.filter((customer) => {
-      const nameMatch = (customer.name || "")
-        .toLowerCase()
-        .includes(filters.name.toLowerCase());
-      const emailMatch = (customer.email || "")
-        .toLowerCase()
-        .includes(filters.email.toLowerCase());
-      const phoneMatch = (customer.phone || "")
-        .toLowerCase()
-        .includes(filters.phone.toLowerCase());
-      return nameMatch && emailMatch && phoneMatch;
+      const searchTerm = filters.searchTerm.toLowerCase();
+      const nameMatch = (customer.name || "").toLowerCase().includes(searchTerm);
+      const emailMatch = (customer.email || "").toLowerCase().includes(searchTerm);
+      return nameMatch || emailMatch;
     });
   }, [customers, filters]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredCustomers.length / customersPerPage));
+  const sortedCustomers = useMemo(() => {
+    let sortableItems = [...filteredCustomers];
+
+    if (sortConfig.key === "original") {
+      return sortCustomersNewestFirst(sortableItems);
+    }
+
+    sortableItems.sort((a, b) => {
+      const numericKeys = ["totalSpend", "visits"];
+      const key = sortConfig.key;
+
+      let valA = a[key];
+      let valB = b[key];
+      let comparison = 0;
+
+      if (numericKeys.includes(key)) {
+        comparison = (valA || 0) - (valB || 0);
+      } else {
+        comparison = (valA || "").toLowerCase().localeCompare((valB || "").toLowerCase());
+      }
+
+      return sortConfig.order === "asc" ? comparison : -comparison;
+    });
+
+    return sortableItems;
+  }, [filteredCustomers, sortConfig]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedCustomers.length / customersPerPage));
   const currentCustomers = useMemo(() => {
     const startIndex = (currentPage - 1) * customersPerPage;
     const endIndex = startIndex + customersPerPage;
-    return filteredCustomers.slice(startIndex, endIndex);
-  }, [filteredCustomers, currentPage]);
+    return sortedCustomers.slice(startIndex, endIndex);
+  }, [sortedCustomers, currentPage, customersPerPage]);
+
+  const sortOptions = [
+    { value: "original_desc", label: "Original (Newest First)", key: "original", order: "desc" },
+    { value: "visits_asc", label: "Visits: Low to High", key: "visits", order: "asc" },
+    { value: "visits_desc", label: "Visits: High to Low", key: "visits", order: "desc" },
+    { value: "totalSpend_asc", label: "Total Spend: Low to High", key: "totalSpend", order: "asc" },
+    { value: "totalSpend_desc", label: "Total Spend: High to Low", key: "totalSpend", order: "desc" },
+  ];
 
   if (status === "loading") {
     return (
@@ -253,7 +274,6 @@ export default function CustomersPage() {
         </div>
         <Separator className="my-6" />
         <div className="flex space-x-2 mb-4">
-          <Skeleton className="h-8 w-[200px]" />
           <Skeleton className="h-8 w-[200px]" />
           <Skeleton className="h-8 w-[200px]" />
         </div>
@@ -280,15 +300,11 @@ export default function CustomersPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      {/* Sonner Toaster mounted here — position top-right */}
       <Toaster position="top-right" />
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Customers</h1>
-
-        {/* Open add dialog via normal Button (controlled dialog) */}
         <Button onClick={() => setIsAddModalOpen(true)}>+ Add New Customer</Button>
-
         <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
@@ -299,48 +315,19 @@ export default function CustomersPage() {
             </DialogHeader>
             <form onSubmit={handleAddCustomer} className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="name" className="text-right">
-                  Name
-                </Label>
-                <Input
-                  id="name"
-                  name="name"
-                  value={newCustomer.name}
-                  onChange={handleAddInputChange}
-                  required
-                  className="col-span-3"
-                />
+                <Label htmlFor="name" className="text-right">Name</Label>
+                <Input id="name" name="name" value={newCustomer.name} onChange={handleAddInputChange} required className="col-span-3" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="email" className="text-right">
-                  Email
-                </Label>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={newCustomer.email}
-                  onChange={handleAddInputChange}
-                  required
-                  className="col-span-3"
-                />
+                <Label htmlFor="email" className="text-right">Email</Label>
+                <Input id="email" name="email" type="email" value={newCustomer.email} onChange={handleAddInputChange} required className="col-span-3" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="phone" className="text-right">
-                  Phone
-                </Label>
-                <Input
-                  id="phone"
-                  name="phone"
-                  value={newCustomer.phone}
-                  onChange={handleAddInputChange}
-                  className="col-span-3"
-                />
+                <Label htmlFor="phone" className="text-right">Phone</Label>
+                <Input id="phone" name="phone" value={newCustomer.phone} onChange={handleAddInputChange} className="col-span-3" />
               </div>
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="ghost" onClick={() => setIsAddModalOpen(false)}>
-                  Cancel
-                </Button>
+                <Button type="button" variant="ghost" onClick={() => setIsAddModalOpen(false)}>Cancel</Button>
                 <Button type="submit">Save Customer</Button>
               </div>
             </form>
@@ -350,54 +337,40 @@ export default function CustomersPage() {
 
       <Separator className="my-6" />
 
-      <div className="flex flex-col md:flex-row gap-4 mb-4">
+      <div className="flex justify-between items-center gap-4 mb-4">
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" className="w-full md:w-auto">
-              Filter by Name
-            </Button>
+            <Button variant="outline">Filter by Name or Email</Button>
           </PopoverTrigger>
           <PopoverContent className="w-64">
             <Input
-              placeholder="Filter name..."
-              name="name"
-              value={filters.name}
+              placeholder="Filter by name or email..."
+              name="searchTerm"
+              value={filters.searchTerm}
               onChange={handleFilterChange}
             />
           </PopoverContent>
         </Popover>
 
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className="w-full md:w-auto">
-              Filter by Email
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-64">
-            <Input
-              placeholder="Filter email..."
-              name="email"
-              value={filters.email}
-              onChange={handleFilterChange}
-            />
-          </PopoverContent>
-        </Popover>
-
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className="w-full md:w-auto">
-              Filter by Phone
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-64">
-            <Input
-              placeholder="Filter phone..."
-              name="phone"
-              value={filters.phone}
-              onChange={handleFilterChange}
-            />
-          </PopoverContent>
-        </Popover>
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">Sort By</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuLabel>Sort Options</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {sortOptions.map(option => (
+                <DropdownMenuItem
+                  key={option.value}
+                  onSelect={() => setSortConfig({ key: option.key, order: option.order })}
+                >
+                  {option.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {loading ? (
@@ -436,41 +409,14 @@ export default function CustomersPage() {
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" className="h-8 w-8 p-0">
                           <span className="sr-only">Open menu</span>
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className="w-4 h-4"
-                          >
-                            <circle cx="12" cy="12" r="1" />
-                            <circle cx="19" cy="12" r="1" />
-                            <circle cx="5" cy="12" r="1" />
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                            <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
                           </svg>
                         </Button>
                       </DropdownMenuTrigger>
-
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setEditingCustomer(c);
-                            setIsEditSheetOpen(true);
-                          }}
-                        >
-                          Edit
-                        </DropdownMenuItem>
-
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setConfirmDeleteId(c._id);
-                            setIsConfirmDeleteOpen(true);
-                          }}
-                        >
-                          Delete
-                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => { setEditingCustomer(c); setIsEditSheetOpen(true); }}>Edit</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => { setConfirmDeleteId(c._id); setIsConfirmDeleteOpen(true); }}>Delete</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -483,42 +429,17 @@ export default function CustomersPage() {
             <Pagination>
               <PaginationContent>
                 <PaginationItem>
-                  <PaginationPrevious
-                    href="#"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setCurrentPage((prev) => Math.max(prev - 1, 1));
-                    }}
-                    className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
-                  />
+                  <PaginationPrevious href="#" onClick={(e) => { e.preventDefault(); setCurrentPage((prev) => Math.max(prev - 1, 1)); }} className={currentPage === 1 ? "pointer-events-none opacity-50" : ""} />
                 </PaginationItem>
-
                 {Array.from({ length: totalPages }, (_, i) => (
                   <PaginationItem key={i}>
-                    <PaginationLink
-                      href="#"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setCurrentPage(i + 1);
-                      }}
-                      isActive={i + 1 === currentPage}
-                    >
+                    <PaginationLink href="#" onClick={(e) => { e.preventDefault(); setCurrentPage(i + 1); }} isActive={i + 1 === currentPage}>
                       {i + 1}
                     </PaginationLink>
                   </PaginationItem>
                 ))}
-
                 <PaginationItem>
-                  <PaginationNext
-                    href="#"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setCurrentPage((prev) => Math.min(prev + 1, totalPages));
-                    }}
-                    className={
-                      currentPage === totalPages ? "pointer-events-none opacity-50" : ""
-                    }
-                  />
+                  <PaginationNext href="#" onClick={(e) => { e.preventDefault(); setCurrentPage((prev) => Math.min(prev + 1, totalPages)); }} className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""} />
                 </PaginationItem>
               </PaginationContent>
             </Pagination>
@@ -526,8 +447,7 @@ export default function CustomersPage() {
         </>
       ) : (
         <div className="text-center text-gray-500 py-10">
-          No customers found. Try adjusting your filters or add a new customer to get
-          started.
+          No customers found. Try adjusting your filters or add a new customer to get started.
         </div>
       )}
 
@@ -540,62 +460,22 @@ export default function CustomersPage() {
               Make changes to the customer's profile here. Click save when you're done.
             </SheetDescription>
           </SheetHeader>
-
           {editingCustomer ? (
             <form onSubmit={handleEditCustomer} className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="editName" className="text-right">
-                  Name
-                </Label>
-                <Input
-                  id="editName"
-                  name="name"
-                  value={editingCustomer.name}
-                  onChange={handleEditInputChange}
-                  required
-                  className="col-span-3"
-                />
+                <Label htmlFor="editName" className="text-right">Name</Label>
+                <Input id="editName" name="name" value={editingCustomer.name} onChange={handleEditInputChange} required className="col-span-3" />
               </div>
-
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="editEmail" className="text-right">
-                  Email
-                </Label>
-                <Input
-                  id="editEmail"
-                  name="email"
-                  type="email"
-                  value={editingCustomer.email}
-                  onChange={handleEditInputChange}
-                  required
-                  className="col-span-3"
-                />
+                <Label htmlFor="editEmail" className="text-right">Email</Label>
+                <Input id="editEmail" name="email" type="email" value={editingCustomer.email} onChange={handleEditInputChange} required className="col-span-3" />
               </div>
-
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="editPhone" className="text-right">
-                  Phone
-                </Label>
-                <Input
-                  id="editPhone"
-                  name="phone"
-                  value={editingCustomer.phone || ""}
-                  onChange={handleEditInputChange}
-                  className="col-span-3"
-                />
+                <Label htmlFor="editPhone" className="text-right">Phone</Label>
+                <Input id="editPhone" name="phone" value={editingCustomer.phone || ""} onChange={handleEditInputChange} className="col-span-3" />
               </div>
-
               <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => {
-                    setIsEditSheetOpen(false);
-                    setEditingCustomer(null);
-                  }}
-                >
-                  Cancel
-                </Button>
+                <Button type="button" variant="ghost" onClick={() => { setIsEditSheetOpen(false); setEditingCustomer(null); }}>Cancel</Button>
                 <Button type="submit">Save Changes</Button>
               </div>
             </form>
@@ -605,32 +485,18 @@ export default function CustomersPage() {
         </SheetContent>
       </Sheet>
 
-      {/* Confirm Delete AlertDialog (controlled) */}
+      {/* Confirm Delete AlertDialog */}
       <AlertDialog open={isConfirmDeleteOpen} onOpenChange={setIsConfirmDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
           </AlertDialogHeader>
           <div className="p-4 text-sm text-muted-foreground">
-            This action cannot be undone. This will permanently delete this customer's
-            data.
+            This action cannot be undone. This will permanently delete this customer's data.
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel
-              onClick={() => {
-                setIsConfirmDeleteOpen(false);
-                setConfirmDeleteId(null);
-              }}
-            >
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (confirmDeleteId) handleDeleteCustomer(confirmDeleteId);
-              }}
-            >
-              Continue
-            </AlertDialogAction>
+            <AlertDialogCancel onClick={() => { setIsConfirmDeleteOpen(false); setConfirmDeleteId(null); }}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (confirmDeleteId) handleDeleteCustomer(confirmDeleteId); }}>Continue</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

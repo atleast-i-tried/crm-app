@@ -1,9 +1,8 @@
-// eslint-disable-next-line react/no-unescaped-entities
-
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
 import { useSession } from "next-auth/react";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -31,7 +30,6 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-
 import {
   Dialog,
   DialogContent,
@@ -40,45 +38,73 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { MoreHorizontal } from "lucide-react";
+
 export default function LogsPage() {
   const { status } = useSession();
-  const [logs, setLogs] = useState([]);
-  const [campaignsMap, setCampaignsMap] = useState({}); // id -> campaign (normalized)
-  const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({
-    campaignName: "",
-    status: "",
-  });
-  const [currentPage, setCurrentPage] = useState(1);
-  const [selectedCampaignLogs, setSelectedCampaignLogs] = useState(null);
-  const logsPerPage = 15;
 
-  // Summary dialog state
+  // data
+  const [logs, setLogs] = useState([]);
+  const [campaignsMap, setCampaignsMap] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  // UI state
+  const [filters, setFilters] = useState({ campaignName: "" });
+  const [currentPage, setCurrentPage] = useState(1);
+  const logsPerPage = 11; // per your request
+
+  // selected campaign details
+  const [selectedCampaignLogs, setSelectedCampaignLogs] = useState(null);
+
+  // summary dialog state
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryText, setSummaryText] = useState("");
   const [summaryError, setSummaryError] = useState("");
 
-  // Helper to try and derive an email string from various shapes
+  // delete flow
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [campaignToDelete, setCampaignToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // ---------- Helpers ----------
   function extractEmail(value) {
     if (!value) return null;
     if (typeof value === "string") {
-      if (value.includes("@")) return value;
-      return null;
+      return value.includes("@") ? value : null;
     }
     if (typeof value === "object") {
-      // common shapes: { email: "x" } or { createdBy: "email" } or nested
       if (typeof value.email === "string" && value.email.includes("@")) return value.email;
       if (typeof value.createdBy === "string" && value.createdBy.includes("@")) return value.createdBy;
-      if (typeof value.createdBy === "object") {
-        if (typeof value.createdBy.email === "string" && value.createdBy.email.includes("@")) return value.createdBy.email;
-      }
-      // maybe it's an array or other shape — give up
+      if (typeof value.createdBy === "object" && typeof value.createdBy.email === "string" && value.createdBy.email.includes("@"))
+        return value.createdBy.email;
     }
     return null;
   }
 
-  // fetch logs + campaigns and normalize so we always have campaign name + createdByEmail
+  function getCustomerSpendFromLog(log) {
+    const c = log.customer || {};
+    const possibleKeys = ["totalSpent", "total_spent", "spend", "total_spend", "lifetime_spend", "lifetimeSpend", "spend_amount"];
+    for (const k of possibleKeys) {
+      if (c[k] !== undefined && c[k] !== null) {
+        const n = Number(c[k]);
+        if (!Number.isNaN(n)) return n;
+      }
+    }
+    if (Array.isArray(c.orders)) {
+      const sum = c.orders.reduce((s, o) => s + Number(o?.amount || 0), 0);
+      if (!Number.isNaN(sum) && sum > 0) return sum;
+    }
+    return null;
+  }
+
+  // ---------- Fetch & normalize ----------
   const fetchAll = async () => {
     setLoading(true);
     try {
@@ -87,39 +113,29 @@ export default function LogsPage() {
       if (!logsRes.ok) throw new Error("Failed to fetch logs");
       if (!campaignsRes.ok) throw new Error("Failed to fetch campaigns");
 
-      const logsData = await logsRes.json();
-      const campaignsData = await campaignsRes.json();
+      const [logsData, campaignsData] = await Promise.all([logsRes.json(), campaignsRes.json()]);
 
-      // build campaigns map (normalize creator email into _creatorEmail)
+      // build campaign map with normalized _creatorEmail
       const map = {};
       if (Array.isArray(campaignsData)) {
         campaignsData.forEach((c) => {
           if (c && c._id) {
             const creatorEmail =
-              extractEmail(c.createdBy) ||
-              extractEmail(c.createdByEmail) ||
-              extractEmail(c.creator) ||
-              null;
-            map[String(c._id)] = {
-              ...c,
-              _creatorEmail: creatorEmail,
-            };
+              extractEmail(c.createdBy) || extractEmail(c.createdByEmail) || extractEmail(c.creator) || null;
+            map[String(c._id)] = { ...c, _creatorEmail: creatorEmail };
           }
         });
       }
 
-      // normalize logs: ensure each log has campaign object with name and createdByEmail
+      // normalize logs: ensure .campaign is an object with name, _id, createdByEmail
       const normalized = (Array.isArray(logsData) ? logsData : []).map((l) => {
         const out = { ...l };
-        // default campaign container
         let campaignObj = null;
 
         if (out.campaign && typeof out.campaign === "object") {
-          // campaign object may already exist
           campaignObj = {
             _id: out.campaign._id || (out.campaign?._id ? String(out.campaign._id) : null),
             name: out.campaign.name || out.campaign.campaignName || out.campaignName || "Unknown Campaign",
-            // prefer email if present inside the campaign object
             createdByEmail:
               extractEmail(out.campaign.createdBy) ||
               extractEmail(out.campaign.createdByEmail) ||
@@ -128,16 +144,12 @@ export default function LogsPage() {
             ...out.campaign,
           };
 
-          // If we have a campaign id and a map entry with a creator email, prefer that
           const id = campaignObj._id && String(campaignObj._id);
-          if (id && map[id] && map[id]._creatorEmail) {
-            campaignObj.createdByEmail = map[id]._creatorEmail;
-          }
+          if (id && map[id] && map[id]._creatorEmail) campaignObj.createdByEmail = map[id]._creatorEmail;
         } else if (out.campaign) {
-          // campaign could be an id (string)
+          // campaign may be an id string
           const id = String(out.campaign);
           const found = map[id];
-
           campaignObj = {
             _id: id,
             name: found?.name || out.campaignName || "Unknown Campaign",
@@ -145,7 +157,6 @@ export default function LogsPage() {
             ...(found || {}),
           };
         } else {
-          // no campaign field on log; fallback to campaignName / createdBy on log
           const maybeId = out.campaignId || (out.campaign && out.campaign._id) || null;
           campaignObj = {
             _id: maybeId || null,
@@ -157,12 +168,8 @@ export default function LogsPage() {
           }
         }
 
-        // ensure createdByEmail fallback is reasonable
         campaignObj.createdByEmail = campaignObj.createdByEmail || extractEmail(out.createdBy) || null;
-
-        // attach normalized campaign onto log
         out.campaign = campaignObj;
-
         return out;
       });
 
@@ -177,98 +184,94 @@ export default function LogsPage() {
   };
 
   useEffect(() => {
-    if (status === "authenticated") {
-      fetchAll();
-    }
+    if (status === "authenticated") fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
+  // ---------- Filters / grouping ----------
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
-    setFilters({ ...filters, [name]: value });
+    setFilters((prev) => ({ ...prev, [name]: value }));
     setCurrentPage(1);
   };
 
-  // group logs by campaign name
+  // group logs by campaign name (normalized)
   const groupedLogs = useMemo(() => {
     const groups = {};
     logs.forEach((log) => {
       const campaignName = log.campaign?.name || log.campaignName || "Unknown Campaign";
       const campaignId = log.campaign?._id || log.campaignId || null;
-      // prefer the normalized email field
       const createdBy = log.campaign?.createdByEmail || extractEmail(log.campaign?.createdBy) || extractEmail(log.createdBy) || "Unknown";
 
       if (!groups[campaignName]) {
-        groups[campaignName] = {
-          name: campaignName,
-          id: campaignId,
-          createdBy,
-          logs: [],
-        };
+        groups[campaignName] = { name: campaignName, id: campaignId, createdBy, logs: [] };
       }
       groups[campaignName].logs.push(log);
-      // ensure createdBy stays populated from first non-unknown
+      // prefer first non-unknown creator
       if (groups[campaignName].createdBy === "Unknown" && createdBy && createdBy !== "Unknown") {
         groups[campaignName].createdBy = createdBy;
       }
     });
 
-    // apply filters
-    const filteredGroups = Object.values(groups).filter((group) => {
-      const campaignMatch = group.name.toLowerCase().includes(filters.campaignName.toLowerCase());
-      const statusMatch = filters.status
-        ? group.logs.some((log) =>
-            (log.status || "").toString().toLowerCase().includes(filters.status.toLowerCase())
-          )
-        : true;
-      return campaignMatch && statusMatch;
-    });
+    // apply campaignName filter only (status filter removed by request)
+    const filtered = Object.values(groups).filter((g) => g.name.toLowerCase().includes(filters.campaignName.toLowerCase()));
 
-    // sort by most recent (by createdAt of first log)
-    filteredGroups.sort((a, b) => {
+    // sort by most recent log in group
+    filtered.sort((a, b) => {
       const aDate = new Date(a.logs?.[0]?.createdAt || 0).getTime();
       const bDate = new Date(b.logs?.[0]?.createdAt || 0).getTime();
       return bDate - aDate;
     });
-
-    return filteredGroups;
+    return filtered;
   }, [logs, filters]);
 
   const totalPages = Math.max(1, Math.ceil(groupedLogs.length / logsPerPage));
   const currentGroups = useMemo(() => {
     const startIndex = (currentPage - 1) * logsPerPage;
-    const endIndex = startIndex + logsPerPage;
-    return groupedLogs.slice(startIndex, endIndex);
+    return groupedLogs.slice(startIndex, startIndex + logsPerPage);
   }, [groupedLogs, currentPage]);
 
+  // ---------- interactions ----------
   const handleCampaignClick = (campaignName) => {
-    const campaignLogs = logs.filter(
-      (log) => (log.campaign?.name || log.campaignName || "Unknown Campaign") === campaignName
-    );
+    const campaignLogs = logs.filter((log) => (log.campaign?.name || log.campaignName || "Unknown Campaign") === campaignName);
     setSelectedCampaignLogs(campaignLogs);
-    // reset summary state
+    // reset summary state when entering details
     setSummaryText("");
     setSummaryError("");
   };
 
-  // Helper to extract numeric spend from a log.customer object
-  function getCustomerSpendFromLog(log) {
-    const c = log.customer || {};
-    const possibleKeys = ["totalSpent", "total_spent", "spend", "total_spend", "lifetime_spend", "lifetimeSpend", "spend_amount"];
-    for (const k of possibleKeys) {
-      if (c[k] !== undefined && c[k] !== null) {
-        const n = Number(c[k]);
-        if (!Number.isNaN(n)) return n;
-      }
-    }
-    // try nested orders sum if present
-    if (Array.isArray(c.orders)) {
-      const sum = c.orders.reduce((s, o) => s + Number(o?.amount || 0), 0);
-      if (!Number.isNaN(sum) && sum > 0) return sum;
-    }
-    return null;
-  }
+  // delete flow
+  const confirmDeleteCampaign = (group) => {
+    setCampaignToDelete({ id: group.id, name: group.name });
+    setDeleteDialogOpen(true);
+  };
 
+  const handleDeleteCampaign = async () => {
+    if (!campaignToDelete?.id) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/campaigns/${campaignToDelete.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "Failed to delete campaign");
+      }
+      toast.success("Campaign deleted");
+      setDeleteDialogOpen(false);
+      setCampaignToDelete(null);
+      // if we were viewing this campaign's details, go back to list
+      if (selectedCampaignLogs && selectedCampaignLogs[0]?.campaign?._id === campaignToDelete.id) {
+        setSelectedCampaignLogs(null);
+      }
+      await fetchAll();
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.message || "Error deleting campaign");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // summary generation (calls your /api/ai/summarize-performance)
   async function handleSummarizeCampaign(group) {
     setIsSummaryOpen(true);
     setSummaryLoading(true);
@@ -282,7 +285,6 @@ export default function LogsPage() {
       const failed = logsForCampaign.length - sent;
       const audienceSize = logsForCampaign.length;
 
-      // compute high-value customers (> 10k)
       const highValueThreshold = 10000;
       const highValueLogs = logsForCampaign.filter((l) => {
         const spend = getCustomerSpendFromLog(l);
@@ -291,11 +293,7 @@ export default function LogsPage() {
       const highValueSent = highValueLogs.filter((l) => String(l.status).toUpperCase() === "SENT").length;
       const highValueRate = highValueLogs.length > 0 ? Math.round((highValueSent / highValueLogs.length) * 100) : null;
 
-      // Also compute top vendor response examples (if any)
-      const vendorResponses = logsForCampaign
-        .map((l) => l.vendorResponse)
-        .filter(Boolean)
-        .slice(0, 3);
+      const vendorResponses = logsForCampaign.map((l) => l.vendorResponse).filter(Boolean).slice(0, 3);
 
       const stats = {
         audienceSize,
@@ -327,6 +325,7 @@ export default function LogsPage() {
     }
   }
 
+  // ---------- UI states ----------
   if (status === "loading") {
     return (
       <div className="p-6 max-w-7xl mx-auto">
@@ -335,7 +334,6 @@ export default function LogsPage() {
         </div>
         <Separator className="my-6" />
         <div className="flex space-x-2 mb-4">
-          <Skeleton className="h-8 w-[200px]" />
           <Skeleton className="h-8 w-[200px]" />
           <Skeleton className="h-8 w-[200px]" />
         </div>
@@ -359,6 +357,7 @@ export default function LogsPage() {
     );
   }
 
+  // ---------- Details view when a campaign is selected ----------
   if (selectedCampaignLogs) {
     const campaignName = selectedCampaignLogs[0]?.campaign?.name || selectedCampaignLogs[0]?.campaignName || "Unknown Campaign";
     const createdByEmail =
@@ -377,10 +376,14 @@ export default function LogsPage() {
           </div>
           <div className="flex items-center gap-2">
             <Button onClick={() => setSelectedCampaignLogs(null)}>Back to All Campaigns</Button>
-            <Button variant="outline" onClick={() => handleSummarizeCampaign(groupForSummary)}>Campaign Summary</Button>
+            <Button variant="outline" onClick={() => handleSummarizeCampaign(groupForSummary)}>
+              Campaign Summary
+            </Button>
           </div>
         </div>
+
         <Separator className="my-6" />
+
         <Table>
           <TableHeader>
             <TableRow className="bg-gray-100 dark:bg-gray-800">
@@ -393,20 +396,14 @@ export default function LogsPage() {
           <TableBody>
             {selectedCampaignLogs.map((l) => (
               <TableRow key={l._id}>
-                <TableCell className="font-medium">
-                  {l.customer?.name || "Unknown"}
-                </TableCell>
+                <TableCell className="font-medium">{l.customer?.name || "Unknown"}</TableCell>
                 <TableCell>
-                  <Badge
-                    variant={String(l.status).toUpperCase() === "SENT" ? "success" : "destructive"}
-                  >
-                    {l.status}
+                  <Badge variant={String(l.status).toUpperCase() === "SENT" ? "success" : "destructive"}>
+                    {l.status || "Unknown"}
                   </Badge>
                 </TableCell>
-                <TableCell>{l.vendorResponse}</TableCell>
-                <TableCell>
-                  {new Date(l.createdAt).toLocaleDateString()}
-                </TableCell>
+                <TableCell className="max-w-xl truncate">{l.vendorResponse || "-"}</TableCell>
+                <TableCell>{l.createdAt ? new Date(l.createdAt).toLocaleString() : "-"}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -417,9 +414,7 @@ export default function LogsPage() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Campaign Summary</DialogTitle>
-              <DialogDescription>
-                AI-generated summary for the selected campaign.
-              </DialogDescription>
+              <DialogDescription>AI-generated summary for the selected campaign.</DialogDescription>
             </DialogHeader>
 
             <div className="mt-4">
@@ -447,12 +442,15 @@ export default function LogsPage() {
     );
   }
 
+  // ---------- Main list view ----------
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Campaign Logs</h1>
       </div>
+
       <Separator className="my-6" />
+
       <div className="flex flex-col md:flex-row gap-4 mb-4">
         <Popover>
           <PopoverTrigger asChild>
@@ -461,29 +459,11 @@ export default function LogsPage() {
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-64">
-            <Input
-              placeholder="Filter campaign name..."
-              name="campaignName"
-              value={filters.campaignName}
-              onChange={handleFilterChange}
-            />
+            <Input placeholder="Filter campaign name..." name="campaignName" value={filters.campaignName} onChange={handleFilterChange} />
           </PopoverContent>
         </Popover>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className="w-full md:w-auto">
-              Filter by Status
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-64">
-            <Input
-              placeholder="Filter status..."
-              name="status"
-              value={filters.status}
-              onChange={handleFilterChange}
-            />
-          </PopoverContent>
-        </Popover>
+
+        {/* status filter intentionally removed per request */}
       </div>
 
       {loading ? (
@@ -500,15 +480,12 @@ export default function LogsPage() {
                 <TableHead>Campaign Name</TableHead>
                 <TableHead>Created By</TableHead>
                 <TableHead>Audience Size</TableHead>
-                <TableHead>Sent</TableHead>
-                <TableHead>Failed</TableHead>
                 <TableHead>Date</TableHead>
+                <TableHead>Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {currentGroups.map((group) => {
-                const sentCount = group.logs.filter((l) => String(l.status).toUpperCase() === "SENT").length;
-                const failedCount = group.logs.length - sentCount;
                 const createdBy = group.createdBy || "Unknown";
                 return (
                   <TableRow
@@ -516,23 +493,26 @@ export default function LogsPage() {
                     className="cursor-pointer hover:bg-slate-100 dark:hover:bg-gray-800 transition"
                     onClick={() => handleCampaignClick(group.name)}
                   >
-                    <TableCell className="font-medium">
-                      {group.name}
-                    </TableCell>
-
-                    <TableCell>
-                      {createdBy}
-                    </TableCell>
-
+                    <TableCell className="font-medium">{group.name}</TableCell>
+                    <TableCell>{createdBy}</TableCell>
                     <TableCell>{group.logs.length}</TableCell>
-                    <TableCell>
-                      <Badge variant="success">{sentCount}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="destructive">{failedCount}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      {new Date(group.logs[0].createdAt).toLocaleDateString()}
+                    <TableCell>{group.logs?.[0]?.createdAt ? new Date(group.logs[0].createdAt).toLocaleDateString() : "-"}</TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" aria-label="Actions">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => confirmDeleteCampaign(group)}
+                          >
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 );
@@ -546,46 +526,53 @@ export default function LogsPage() {
                 <PaginationItem>
                   <PaginationPrevious
                     href="#"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.max(prev - 1, 1))
-                    }
-                    className={
-                      currentPage === 1 ? "pointer-events-none opacity-50" : ""
-                    }
+                    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                    className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
                   />
                 </PaginationItem>
+
                 {Array.from({ length: totalPages }, (_, i) => (
                   <PaginationItem key={i}>
-                    <PaginationLink
-                      href="#"
-                      onClick={() => setCurrentPage(i + 1)}
-                      isActive={i + 1 === currentPage}
-                    >
+                    <PaginationLink href="#" onClick={() => setCurrentPage(i + 1)} isActive={i + 1 === currentPage}>
                       {i + 1}
                     </PaginationLink>
                   </PaginationItem>
                 ))}
+
                 <PaginationItem>
                   <PaginationNext
                     href="#"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.min(prev + 1, totalPages))
-                    }
-                    className={
-                      currentPage === totalPages
-                        ? "pointer-events-none opacity-50"
-                        : ""
-                    }
+                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                    className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""}
                   />
                 </PaginationItem>
               </PaginationContent>
             </Pagination>
           </div>
+
+          {/* Delete Confirmation Dialog */}
+          <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Delete Campaign</DialogTitle>
+                <DialogDescription>
+                  Are you sure you want to delete <strong>{campaignToDelete?.name}</strong>? This will also delete all associated logs. This action cannot be undone.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="mt-6 flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setDeleteDialogOpen(false)} disabled={deleting}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={handleDeleteCampaign} disabled={deleting}>
+                  {deleting ? "Deleting..." : "Delete"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </>
       ) : (
-        <div className="text-center text-gray-500 py-10">
-          No logs found. Launch a campaign to see logs.
-        </div>
+        <div className="text-center text-gray-500 py-10">No logs found. Launch a campaign to see logs.</div>
       )}
     </div>
   );
