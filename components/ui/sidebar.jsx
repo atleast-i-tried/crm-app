@@ -87,7 +87,7 @@ export default function Sidebar({ children }) {
             <div className="flex items-center justify-between gap-3">
               <Link href="/">
                 <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">
-                  XenoCRM
+                  EngageCRM
                 </h3>
               </Link>
               <button

@@ -53,7 +53,7 @@ const Header = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-20">
           <h1 className="text-3xl font-bold tracking-tight">
-            <span className="text-blue-700">Xeno</span>
+            <span className="text-blue-700">Engage</span>
             <span className="text-black">CRM</span>
           </h1>
           <Button
@@ -294,7 +294,7 @@ const Footer = () => (
         </div>
       </div>
       <div className="mt-12 border-t border-slate-800 pt-8 text-center">
-        <p>&copy; 2025 XenoCRM</p>
+        <p>&copy; 2025 EngageCRM</p>
       </div>
     </div>
   </footer>
