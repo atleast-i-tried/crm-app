@@ -6,33 +6,17 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,12 +26,15 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { EllipsisVertical, X } from "lucide-react";
-
-// Added Card imports for the AI UI block (boilerplate)
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
+import { X, EllipsisVertical } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export default function CampaignsPage() {
   const { data: session, status } = useSession();
@@ -55,8 +42,8 @@ export default function CampaignsPage() {
   const [customers, setCustomers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [selectedCampaign, setSelectedCampaign] = useState(null);
+
+  // Create-campaign state (form is visible inline now)
   const [newCampaign, setNewCampaign] = useState({
     name: "",
     message: "",
@@ -64,11 +51,16 @@ export default function CampaignsPage() {
     filters: [],
     logic: "AND",
   });
-  const [aiSuggestions, setAiSuggestions] = useState([]); // always an array
-  const [aiLoading, setAiLoading] = useState(false);
   const [audienceSize, setAudienceSize] = useState(0);
 
-  // New state: controlled confirm delete dialog
+  // AI
+  const [aiSuggestions, setAiSuggestions] = useState([]);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  // Details dialog for recent campaigns (opens when user clicks a recent campaign)
+  const [selectedCampaign, setSelectedCampaign] = useState(null);
+
+  // Delete confirmation
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
@@ -79,9 +71,9 @@ export default function CampaignsPage() {
   ];
 
   const applyFilters = (customerList, filters, logic) => {
-    if (!filters || filters.length === 0) return customerList;
+    if (!filters || filters.length === 0) return customerList || [];
 
-    return customerList.filter((c) => {
+    return (customerList || []).filter((c) => {
       const results = filters.map((f) => {
         switch (f.key) {
           case "minSpend":
@@ -89,7 +81,7 @@ export default function CampaignsPage() {
           case "minVisits":
             return (c.visits || 0) >= (Number(f.value) || 0);
           case "inactiveDays":
-            if (!f.value) return true;
+            if (!f.value && f.value !== 0) return true;
             return (
               c.lastActive &&
               (new Date() - new Date(c.lastActive)) / (1000 * 60 * 60 * 24) >= Number(f.value)
@@ -103,9 +95,9 @@ export default function CampaignsPage() {
   };
 
   const handleFilterChange = (index, key, value) => {
-    const updatedFilters = [...newCampaign.filters];
-    updatedFilters[index] = { ...updatedFilters[index], key, value };
-    setNewCampaign({ ...newCampaign, filters: updatedFilters });
+    const updated = [...newCampaign.filters];
+    updated[index] = { ...updated[index], key, value };
+    setNewCampaign({ ...newCampaign, filters: updated });
   };
 
   const handleLogicChange = (logic) => {
@@ -122,12 +114,13 @@ export default function CampaignsPage() {
   };
 
   const handleRemoveFilter = (index) => {
-    const updatedFilters = newCampaign.filters.filter((_, i) => i !== index);
-    setNewCampaign({ ...newCampaign, filters: updatedFilters });
+    const updated = newCampaign.filters.filter((_, i) => i !== index);
+    setNewCampaign({ ...newCampaign, filters: updated });
   };
 
   const fetchAllData = async () => {
     try {
+      setLoading(true);
       const [campaignsRes, customersRes, logsRes] = await Promise.all([
         fetch("/api/campaigns"),
         fetch("/api/customers"),
@@ -142,14 +135,16 @@ export default function CampaignsPage() {
       const customersData = await customersRes.json();
       const logsData = await logsRes.json();
 
-      setCampaigns(campaignsData);
-      setCustomers(customersData);
-      setLogs(logsData);
+      setCampaigns(campaignsData || []);
+      setCustomers(customersData || []);
+      setLogs(logsData || []);
+
+      // set audience size for current inline form filters
       const initialAudience = applyFilters(customersData, newCampaign.filters, newCampaign.logic);
       setAudienceSize(initialAudience.length);
     } catch (error) {
-      toast.error("An error occurred while fetching data.");
       console.error(error);
+      toast.error("An error occurred while fetching data.");
     } finally {
       setLoading(false);
     }
@@ -189,12 +184,12 @@ export default function CampaignsPage() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || "Failed to create campaign");
       }
 
       await fetchAllData();
-      setIsAddModalOpen(false);
+      // clear form but keep logic default
       setNewCampaign({
         name: "",
         message: "",
@@ -203,10 +198,10 @@ export default function CampaignsPage() {
         logic: "AND",
       });
       setAudienceSize(0);
-      setAiSuggestions([]); // reset suggestions after create
+      setAiSuggestions([]);
       toast.success("Campaign launched successfully!");
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to create campaign");
     }
   };
 
@@ -217,14 +212,25 @@ export default function CampaignsPage() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || "Failed to delete campaign");
       }
 
       await fetchAllData();
       toast.success("Campaign deleted successfully!");
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to delete campaign");
+    }
+  };
+
+  // confirm delete action handler
+  const confirmDelete = async () => {
+    if (!confirmDeleteId) return;
+    setConfirmDeleteOpen(false);
+    try {
+      await handleDeleteCampaign(confirmDeleteId);
+    } finally {
+      setConfirmDeleteId(null);
     }
   };
 
@@ -247,7 +253,6 @@ export default function CampaignsPage() {
     return [String(raw)];
   };
 
-  // Keep existing getAiSuggestions logic but normalize response to array
   const getAiSuggestions = async () => {
     if (!newCampaign.objective) {
       toast.error("Please enter a campaign objective first.");
@@ -281,31 +286,26 @@ export default function CampaignsPage() {
     } catch (error) {
       console.error("getAiSuggestions error:", error);
       toast.error(error.message || "Failed to get AI suggestions");
-      setAiSuggestions([]); // ensure array
+      setAiSuggestions([]);
     } finally {
       setAiLoading(false);
     }
   };
 
   const campaignStats = useMemo(() => {
-    return campaigns.map((campaign) => {
-      const relatedLogs = logs.filter((log) => log.campaign === campaign._id);
+    return (campaigns || []).map((campaign) => {
+      const relatedLogs = (logs || []).filter((log) => log.campaign === campaign._id);
       const sentCount = relatedLogs.filter((log) => log.status === "SENT").length;
       const failedCount = relatedLogs.length - sentCount;
       const logsAudience = relatedLogs.length;
 
-      // compute audience from campaign filters (fallback when logs aren't present)
-      const audienceFromFilters = (campaign.filters && campaign.filters.length > 0)
-        ? applyFilters(customers, campaign.filters, campaign.logic || "AND").length
-        : 0;
+      const audienceFromFilters =
+        campaign.filters && campaign.filters.length > 0
+          ? applyFilters(customers, campaign.filters, campaign.logic || "AND").length
+          : 0;
 
-      // prefer logs-based audience if logs exist, otherwise use filters-based audience
       const audienceSize = logsAudience > 0 ? logsAudience : audienceFromFilters;
 
-      // Success / failed rates:
-      // - if we have logs: use logs to compute success/failed rates
-      // - if no logs but filters produce an audience: treat as 100% success (as requested)
-      // - otherwise 0
       let successRate = 0;
       let failedRate = 0;
 
@@ -332,6 +332,11 @@ export default function CampaignsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaigns, logs, customers]);
 
+  // derive recent 3 campaigns (most recent createdAt)
+  const recentCampaigns = useMemo(() => {
+    return [...(campaignStats || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 3);
+  }, [campaignStats]);
+
   if (status === "loading") {
     return (
       <div className="p-6 max-w-7xl mx-auto">
@@ -340,10 +345,17 @@ export default function CampaignsPage() {
           <Skeleton className="h-10 w-40" />
         </div>
         <Separator className="my-6" />
-        <div className="space-y-4">
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
+        <div className="grid grid-cols-3 gap-6">
+          <div className="col-span-2 space-y-4">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+          <div className="space-y-4">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+          </div>
         </div>
       </div>
     );
@@ -360,244 +372,170 @@ export default function CampaignsPage() {
     );
   }
 
-  // confirm delete action handler (keeps UI responsive)
-  const confirmDelete = async () => {
-    if (!confirmDeleteId) return;
-    // close modal immediately for good UX, but keep id so delete runs
-    setConfirmDeleteOpen(false);
-    try {
-      await handleDeleteCampaign(confirmDeleteId);
-    } finally {
-      setConfirmDeleteId(null);
-    }
-  };
-
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">Campaigns</h1>
-        <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
-          <DialogTrigger asChild>
-            <Button>+ Create New Campaign</Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-xl max-h-[80vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Create Campaign</DialogTitle>
-              <DialogDescription>
-                Define your audience and message to launch a new campaign.
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleAddCampaign} className="grid gap-6 py-4">
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="name" className="text-right">
-                  Name
-                </Label>
-                <Input
-                  id="name"
-                  name="name"
-                  value={newCampaign.name}
-                  onChange={handleInputChange}
-                  required
-                  className="col-span-3"
-                />
-              </div>
-
-              {/* Dynamic Rule Builder Section */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-semibold text-gray-500">Audience Filters</h4>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">Logic:</span>
-                    <Button
-                      type="button"
-                      variant={newCampaign.logic === "AND" ? "default" : "outline"}
-                      onClick={() => handleLogicChange("AND")}
-                      size="sm"
-                    >
-                      AND
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={newCampaign.logic === "OR" ? "default" : "outline"}
-                      onClick={() => handleLogicChange("OR")}
-                      size="sm"
-                    >
-                      OR
-                    </Button>
-                  </div>
-                </div>
-
-                {newCampaign.filters.map((filter, index) => (
-                  <div key={index} className="flex items-center gap-2">
-                    <select
-                      value={filter.key}
-                      onChange={(e) => handleFilterChange(index, e.target.value, filter.value)}
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {filterOptions.map((option) => (
-                        <option key={option.key} value={option.key}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <Input
-                      type="number"
-                      value={filter.value}
-                      onChange={(e) => handleFilterChange(index, filter.key, Number(e.target.value))}
-                      className="w-full"
-                    />
-                    <Button type="button" variant="destructive" size="icon" onClick={() => handleRemoveFilter(index)}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={handleAddFilter}
-                  disabled={newCampaign.filters.length >= 3}
-                >
-                  + Add Filter
-                </Button>
-
-                <div className="text-center text-sm font-medium mt-2">
-                  Audience Size: <Badge variant="secondary">{audienceSize}</Badge>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* AI Integration Section - boilerplate Card UI preserved */}
-              <div className="space-y-4">
-                <h4 className="text-sm font-semibold text-gray-500">AI Message Suggestions</h4>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>AI Message Assistant</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex gap-2 items-end">
-                      <div className="flex-1 space-y-2">
-                        <Label htmlFor="objective">Campaign Objective</Label>
-                        <Input
-                          id="objective"
-                          name="objective"
-                          placeholder="e.g., 'bring back inactive users'"
-                          value={newCampaign.objective}
-                          onChange={handleInputChange}
-                        />
-                      </div>
-                      <Button type="button" onClick={getAiSuggestions} disabled={aiLoading}>
-                        {aiLoading ? "Generating..." : "✨ Generate AI Messages"}
-                      </Button>
-                    </div>
-
-                    {aiSuggestions && aiSuggestions.length > 0 && (
-                      <div className="space-y-2">
-                        {aiSuggestions.map((suggestion, index) => (
-                          <div
-                            key={index}
-                            className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition"
-                            onClick={() =>
-                              setNewCampaign({
-                                ...newCampaign,
-                                message: suggestion,
-                              })
-                            }
-                          >
-                            <p className="text-sm">{suggestion}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="space-y-2">
-                      <Label htmlFor="message">Final Message</Label>
-                      <Textarea
-                        id="message"
-                        name="message"
-                        value={newCampaign.message}
-                        onChange={handleInputChange}
-                        required
-                        placeholder="Enter your campaign message here..."
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Button type="submit" className="w-full">
-                Launch Campaign
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold">Create Campaign</h1>
+        <div className="text-sm text-gray-500">Design your audience, craft the message, and launch.</div>
       </div>
+
       <Separator className="my-6" />
 
-      {/* Campaign History */}
-      {loading ? (
-        <div className="space-y-4">
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-        </div>
-      ) : campaignStats.length > 0 ? (
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-gray-100 dark:bg-gray-800">
-              <TableHead>Campaign Name</TableHead>
-              <TableHead>Created By</TableHead>
-              <TableHead>Audience Size</TableHead>
-              <TableHead>Success Rate</TableHead>
-              <TableHead>Failed Rate</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {campaigns
-              .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-              .map((c) => {
-                const stats = campaignStats.find((s) => s._id === c._id);
-                return (
-                  <TableRow
-                    key={c._id}
-                    className="cursor-pointer hover:bg-gray-100/50"
-                    onClick={() => setSelectedCampaign(stats)}
+      {/* Main layout: left = create form, right = recent campaigns */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left: Create Campaign (visible inline, replaces dialog) */}
+        <div className="lg:col-span-2">
+          <form onSubmit={handleAddCampaign} className="space-y-6 bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm">
+            {/* Name */}
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="name" className="text-right">
+                Name
+              </Label>
+              <Input id="name" name="name" value={newCampaign.name} onChange={handleInputChange} required className="col-span-3" />
+            </div>
+
+            {/* Audience Filters */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-gray-500">Audience Filters</h4>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">Logic:</span>
+                  <Button type="button" variant={newCampaign.logic === "AND" ? "default" : "outline"} onClick={() => handleLogicChange("AND")} size="sm">
+                    AND
+                  </Button>
+                  <Button type="button" variant={newCampaign.logic === "OR" ? "default" : "outline"} onClick={() => handleLogicChange("OR")} size="sm">
+                    OR
+                  </Button>
+                </div>
+              </div>
+
+              {newCampaign.filters.map((filter, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <select
+                    value={filter.key}
+                    onChange={(e) => handleFilterChange(index, e.target.value, filter.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <TableCell className="font-medium">{c.name}</TableCell>
-                    <TableCell>{c.createdBy}</TableCell>
-                    <TableCell>{stats?.audienceSize || 0}</TableCell>
-                    <TableCell>
-                      {/* make success percentage visually green */}
-                      <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">
-                        {stats?.successRate}%
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="destructive">{stats?.failedRate}%</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {/* stopPropagation added to prevent row click when interacting with menu */}
+                    {filterOptions.map((option) => (
+                      <option key={option.key} value={option.key}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Input
+                    type="number"
+                    value={filter.value}
+                    onChange={(e) => handleFilterChange(index, filter.key, Number(e.target.value))}
+                    className="w-full"
+                  />
+                  <Button type="button" variant="destructive" size="icon" onClick={() => handleRemoveFilter(index)}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+
+              <Button type="button" variant="outline" className="w-full" onClick={handleAddFilter} disabled={newCampaign.filters.length >= 3}>
+                + Add Filter
+              </Button>
+
+              <div className="text-center text-sm font-medium mt-2">
+                Audience Size: <Badge variant="secondary">{audienceSize}</Badge>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* AI Assistant */}
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold text-gray-500">AI Message Suggestions</h4>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>AI Message Assistant</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="objective">Campaign Objective</Label>
+                      <Input
+                        id="objective"
+                        name="objective"
+                        placeholder="e.g., 'bring back inactive users'"
+                        value={newCampaign.objective}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                    <Button type="button" onClick={getAiSuggestions} disabled={aiLoading}>
+                      {aiLoading ? "Generating..." : "Generate AI Messages"}
+                    </Button>
+                  </div>
+
+                  {aiSuggestions && aiSuggestions.length > 0 && (
+                    <div className="space-y-2">
+                      {aiSuggestions.map((suggestion, index) => (
+                        <div
+                          key={index}
+                          className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition"
+                          onClick={() => setNewCampaign({ ...newCampaign, message: suggestion })}
+                        >
+                          <p className="text-sm">{suggestion}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="message">Final Message</Label>
+                    <Textarea
+                      id="message"
+                      name="message"
+                      value={newCampaign.message}
+                      onChange={handleInputChange}
+                      required
+                      placeholder="Enter your campaign message here..."
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Button type="submit" className="w-full">
+              Launch Campaign
+            </Button>
+          </form>
+        </div>
+
+        {/* Right: Recent campaigns */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Recent Campaigns</h2>
+            <span className="text-sm text-gray-500">Latest 3</span>
+          </div>
+
+          {loading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+            </div>
+          ) : recentCampaigns.length > 0 ? (
+            recentCampaigns.map((c) => (
+              <Card key={c._id} className="shadow-sm">
+                <CardContent className="p-4 flex items-start gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-medium">{c.name}</h3>
                       <div onClick={(e) => e.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              className="h-8 w-8 p-0"
-                              onClick={(e) => e.stopPropagation()}
-                            >
+                            <Button variant="ghost" className="h-8 w-8 p-0">
                               <span className="sr-only">Open menu</span>
                               <EllipsisVertical className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                            {/* When Delete clicked we set confirmDeleteId and open the top-level dialog */}
+                          <DropdownMenuContent align="end">
                             <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation();
+                              onClick={() => {
                                 setConfirmDeleteId(c._id);
                                 setConfirmDeleteOpen(true);
                               }}
@@ -607,18 +545,44 @@ export default function CampaignsPage() {
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-          </TableBody>
-        </Table>
-      ) : (
-        <div className="text-center text-gray-500 py-10">No campaigns found. Create your first campaign to get started.</div>
-      )}
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-2">
+                      <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">
+                        {c.successRate}% success
+                      </Badge>
+                      <Badge className="bg-red-50 text-red-700 dark:bg-red-800 dark:text-red-200">{c.failedRate}% failed</Badge>
+                      <span className="text-xs text-gray-400 ml-auto">{new Date(c.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <div className="mt-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedCampaign(c);
+                        }}
+                      >
+                        View
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          ) : (
+            <div className="text-sm text-gray-500">No recent campaigns. Launch one from the left.</div>
+          )}
+        </div>
+      </div>
 
       {/* Top-level delete confirmation dialog (controlled) */}
-      <AlertDialog open={confirmDeleteOpen} onOpenChange={(val) => { setConfirmDeleteOpen(val); if (!val) setConfirmDeleteId(null); }}>
+      <AlertDialog
+        open={confirmDeleteOpen}
+        onOpenChange={(val) => {
+          setConfirmDeleteOpen(val);
+          if (!val) setConfirmDeleteId(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
@@ -627,33 +591,41 @@ export default function CampaignsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => { setConfirmDeleteOpen(false); setConfirmDeleteId(null); }}>
+            <AlertDialogCancel
+              onClick={() => {
+                setConfirmDeleteOpen(false);
+                setConfirmDeleteId(null);
+              }}
+            >
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>
-              Continue
-            </AlertDialogAction>
+            <AlertDialogAction onClick={confirmDelete}>Continue</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Campaign Details Dialog */}
-      <Dialog open={!!selectedCampaign} onOpenChange={() => setSelectedCampaign(null)}>
+      {/* Campaign Details Dialog (opens when user clicks a recent campaign's View) */}
+      <Dialog open={!!selectedCampaign} onOpenChange={(val) => !val && setSelectedCampaign(null)}>
         {selectedCampaign && (
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent className="sm:max-w-[520px]">
             <DialogHeader>
               <DialogTitle>{selectedCampaign.name}</DialogTitle>
               <DialogDescription>Details for this campaign.</DialogDescription>
             </DialogHeader>
+
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-2 items-center gap-4">
                 <p className="text-sm font-medium">Created By:</p>
                 <p className="text-sm text-gray-500">{selectedCampaign.createdBy}</p>
               </div>
+
               <Separator />
+
               <div className="space-y-2">
-                <p className="text-sm font-medium">Filters ({selectedCampaign.logic}):</p>
-                {selectedCampaign.filters.length > 0 ? (
+                <p className="text-sm font-medium">
+                  Filters ({selectedCampaign.logic || "AND"}):
+                </p>
+                {selectedCampaign.filters && selectedCampaign.filters.length > 0 ? (
                   <ul className="list-disc list-inside space-y-1 text-sm text-gray-500">
                     {selectedCampaign.filters.map((filter, index) => (
                       <li key={index}>
@@ -667,11 +639,37 @@ export default function CampaignsPage() {
                   <p className="text-sm text-gray-500">No filters applied.</p>
                 )}
               </div>
+
               <Separator />
+
               <div className="grid gap-2">
                 <p className="text-sm font-medium">Message:</p>
-                <p className="text-sm text-gray-500">{selectedCampaign.message}</p>
+                <p className="text-sm text-gray-500 whitespace-pre-wrap">{selectedCampaign.message || "—"}</p>
               </div>
+
+              <Separator />
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-gray-400">Audience</p>
+                  <div className="text-sm font-medium">{selectedCampaign.audienceSize || 0}</div>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">Sent / Failed</p>
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">
+                      {selectedCampaign.sent || 0} sent
+                    </Badge>
+                    <Badge className="bg-red-50 text-red-700 dark:bg-red-800 dark:text-red-200">{selectedCampaign.failed || 0} failed</Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-2">
+              <Button variant="outline" onClick={() => setSelectedCampaign(null)}>
+                Close
+              </Button>
             </div>
           </DialogContent>
         )}
