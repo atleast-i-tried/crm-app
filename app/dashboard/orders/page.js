@@ -46,6 +46,62 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+// Icon for sorting arrows
+const SortIcon = ({ className }) => (
+  <svg
+    className={className}
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="m7 15 5 5 5-5" />
+    <path d="m7 9 5-5 5 5" />
+  </svg>
+);
+
+/** Safe timestamp extraction helper (ObjectId -> ms) */
+function idToTimestampMs(id) {
+  try {
+    return parseInt(id.substring(0, 8), 16) * 1000;
+  } catch {
+    return 0;
+  }
+}
+
+/** Sort newest first by ObjectId timestamp (fallback) */
+function sortNewestFirst(list = []) {
+  return list.slice().sort((a, b) => {
+    const ta = a.createdAt
+      ? new Date(a.createdAt).getTime()
+      : idToTimestampMs(a._id || "");
+    const tb = b.createdAt
+      ? new Date(b.createdAt).getTime()
+      : idToTimestampMs(b._id || "");
+    return tb - ta;
+  });
+}
 
 export default function OrdersPage() {
   const { status } = useSession();
@@ -54,19 +110,28 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+
   const [newOrder, setNewOrder] = useState({
     customerId: "",
     amount: "",
   });
+
   const [filters, setFilters] = useState({
-    customerName: "",
-    status: "",
+    searchTerm: "",
   });
+
+  const [sortConfig, setSortConfig] = useState({
+    key: "date",
+    direction: "descending",
+  });
+
   const [currentPage, setCurrentPage] = useState(1);
   const [customerFilter, setCustomerFilter] = useState("");
   const ordersPerPage = 11;
 
-  // refs for customer diffing and to prevent toasts on initial load
   const prevCustomersRef = useRef([]);
   const isInitialCustomersRef = useRef(true);
   const customersPollRef = useRef(null);
@@ -77,49 +142,47 @@ export default function OrdersPage() {
       if (!res.ok) throw new Error("Failed to fetch orders");
       const data = await res.json();
       setOrders(Array.isArray(data) ? data : []);
-    } catch (error) {
-      toast.error(error.message || "Failed to fetch orders");
+    } catch (err) {
+      toast.error(err?.message || "Failed to fetch orders");
     }
   }, []);
 
   const _processCustomerDiffsAndSet = (newList) => {
-    const prevList = prevCustomersRef.current || [];
-    // map prev by id for quick lookup
+    const prev = prevCustomersRef.current || [];
     const prevMap = {};
-    prevList.forEach((p) => {
+    prev.forEach((p) => {
       if (p && p._id) prevMap[p._id] = p;
     });
 
     const added = [];
-    const edited = [];
+    const updated = [];
     newList.forEach((c) => {
       if (!c || !c._id) return;
-      const prev = prevMap[c._id];
-      if (!prev) {
-        added.push(c);
-      } else {
-        // simple deep compare for relevant fields (name, email, updatedAt)
-        const prevStr = JSON.stringify({
-          name: prev.name,
-          email: prev.email,
-          updatedAt: prev.updatedAt,
+      const p = prevMap[c._id];
+      if (!p) added.push(c);
+      else {
+        const pStr = JSON.stringify({
+          name: p.name,
+          email: p.email,
+          updatedAt: p.updatedAt,
         });
-        const currStr = JSON.stringify({
+        const cStr = JSON.stringify({
           name: c.name,
           email: c.email,
           updatedAt: c.updatedAt,
         });
-        if (prevStr !== currStr) edited.push(c);
+        if (pStr !== cStr) updated.push(c);
       }
     });
 
-    // Only show toasts after the initial load
     if (!isInitialCustomersRef.current) {
       added.forEach((c) =>
         toast.success(`${c.name || "Customer"} added`, { description: c.email })
       );
-      edited.forEach((c) =>
-        toast.success(`${c.name || "Customer"} updated`, { description: c.email })
+      updated.forEach((c) =>
+        toast.success(`${c.name || "Customer"} updated`, {
+          description: c.email,
+        })
       );
     }
 
@@ -133,132 +196,238 @@ export default function OrdersPage() {
       const res = await fetch("/api/customers");
       if (!res.ok) throw new Error("Failed to fetch customers");
       const data = await res.json();
-      const list = Array.isArray(data) ? data : [];
-      // sort customers newest first (if they have createdAt)
-      list.sort((a, b) => {
-        const ta = new Date(a.createdAt || a.updatedAt || 0).getTime();
-        const tb = new Date(b.createdAt || b.updatedAt || 0).getTime();
-        return tb - ta;
-      });
+      const list = Array.isArray(data) ? sortNewestFirst(data) : [];
       _processCustomerDiffsAndSet(list);
-    } catch (error) {
-      toast.error(error.message || "Failed to fetch customers");
+    } catch (err) {
+      toast.error(err?.message || "Failed to fetch customers");
     }
   }, []);
 
-  // initial fetch + polling for customer changes
   useEffect(() => {
     if (status !== "authenticated") return;
-
-    let isMounted = true;
+    let mounted = true;
     setLoading(true);
 
     Promise.all([fetchOrders(), fetchCustomers()]).finally(() => {
-      if (!isMounted) return;
+      if (!mounted) return;
       setLoading(false);
     });
 
-    // poll customers every 20 seconds to detect additions/edits
     customersPollRef.current = setInterval(() => {
       fetchCustomers();
     }, 20000);
 
     return () => {
-      isMounted = false;
+      mounted = false;
       if (customersPollRef.current) clearInterval(customersPollRef.current);
     };
   }, [status, fetchOrders, fetchCustomers]);
 
   const handleAddInputChange = (e) => {
     const { name, value } = e.target;
-    setNewOrder((prev) => ({ ...prev, [name]: value }));
+    setNewOrder((p) => ({ ...p, [name]: value }));
   };
 
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
-    setFilters((prev) => ({ ...prev, [name]: value }));
+    setFilters((p) => ({ ...p, [name]: value }));
     setCurrentPage(1);
   };
 
   const handleAddOrder = async (e) => {
     e.preventDefault();
-    // close modal immediately to avoid multiple clicks as requested
     setIsModalOpen(false);
     setIsSubmitting(true);
-
     try {
       const res = await fetch("/api/orders", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newOrder),
       });
-
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || "Failed to add order");
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "Failed to add order");
+      }
+      const createdOrder = await res.json().catch(() => null);
+
+      if (createdOrder && createdOrder._id) {
+        // Find the full customer object from the already-loaded customers state
+        const customerDetails = customers.find(
+          (c) => c._id === newOrder.customerId
+        );
+
+        // Manually create a complete order object to display instantly
+        const populatedOrder = {
+          ...createdOrder,
+          customer: customerDetails || null, // Add the customer object
+        };
+
+        // Update the orders state with the fully populated new order
+        setOrders((prev) => [populatedOrder, ...prev]);
+      } else {
+        await fetchOrders(); // Fallback to refetch all if creation response is weird
       }
 
-      // re-fetch orders so newest appear on top
-      await fetchOrders();
       setNewOrder({ customerId: "", amount: "" });
       toast.success("Order added successfully!");
-      setCurrentPage(1); // show first page which contains latest orders
-    } catch (error) {
-      // reopen dialog on error so user can retry / edit
+
+      // Reset filters and sorting to default
+      setFilters({ searchTerm: "" });
+      setSortConfig({ key: "date", direction: "descending" });
+      setCurrentPage(1);
+    } catch (err) {
       setIsModalOpen(true);
-      toast.error(error.message || "Could not add order");
+      toast.error(err?.message || "Could not add order");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Filter and sort orders: ensure newest first (reverse chronological)
-  const filteredOrders = useMemo(() => {
-    const lowerCustomer = (filters.customerName || "").toLowerCase();
-    const lowerStatus = (filters.status || "").toLowerCase();
+  const handleDeleteOrder = async (orderId) => {
+    setConfirmDeleteId(orderId);
+    setIsConfirmDeleteOpen(true);
+  };
 
-    const filtered = (orders || []).filter((order) => {
-      const customerNameMatch = (order.customer?.name || "")
-        .toLowerCase()
-        .includes(lowerCustomer);
-      const statusMatch = (order.status || "").toLowerCase().includes(lowerStatus);
-      return customerNameMatch && statusMatch;
-    });
+  const confirmDelete = async () => {
+    if (!confirmDeleteId) return;
+    setIsConfirmDeleteOpen(false);
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/orders/${confirmDeleteId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "Failed to delete order");
+      }
+      setOrders((prev) => prev.filter((o) => o._id !== confirmDeleteId));
+      toast.success("Order deleted successfully");
+      setConfirmDeleteId(null);
+      setCurrentPage(1);
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.message || "Could not delete order");
+    } finally {
+      setIsDeleting(false);
+      setConfirmDeleteId(null);
+    }
+  };
 
-    // Sort by createdAt desc (newest first)
-    filtered.sort((a, b) => {
-      const ta = new Date(a.createdAt || a.updatedAt || 0).getTime();
-      const tb = new Date(b.createdAt || b.updatedAt || 0).getTime();
-      return tb - ta;
-    });
+  const requestSort = (key) => {
+    let direction = "ascending";
+    if (sortConfig.key === key && sortConfig.direction === "ascending") {
+      direction = "descending";
+    }
+    setSortConfig({ key, direction });
+  };
 
-    return filtered;
-  }, [orders, filters]);
+  const sortedAndFilteredOrders = useMemo(() => {
+    let sortableItems = [...orders];
 
-  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ordersPerPage));
+    // Filtering
+    const searchTerm = (filters.searchTerm || "").toLowerCase();
+    if (searchTerm) {
+      sortableItems = sortableItems.filter((o) => {
+        const nameMatch = (o.customer?.name || "")
+          .toLowerCase()
+          .includes(searchTerm);
+        const emailMatch = (o.customer?.email || "")
+          .toLowerCase()
+          .includes(searchTerm);
+        return nameMatch || emailMatch;
+      });
+    }
+
+    // Sorting
+    if (sortConfig.key !== null) {
+      sortableItems.sort((a, b) => {
+        let aValue, bValue;
+
+        switch (sortConfig.key) {
+          case "customer":
+            aValue = a.customer?.name || "";
+            bValue = b.customer?.name || "";
+            break;
+          case "amount":
+            aValue = a.amount;
+            bValue = b.amount;
+            break;
+          case "date":
+            aValue = new Date(
+              a.createdAt || a.updatedAt || idToTimestampMs(a._id) || 0
+            ).getTime();
+            bValue = new Date(
+              b.createdAt || b.updatedAt || idToTimestampMs(b._id) || 0
+            ).getTime();
+            break;
+          default:
+            return 0;
+        }
+
+        if (aValue < bValue) {
+          return sortConfig.direction === "ascending" ? -1 : 1;
+        }
+        if (aValue > bValue) {
+          return sortConfig.direction === "ascending" ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+
+    return sortableItems;
+  }, [orders, filters, sortConfig]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(sortedAndFilteredOrders.length / ordersPerPage)
+  );
   const currentOrders = useMemo(() => {
-    const startIndex = (currentPage - 1) * ordersPerPage;
-    const endIndex = startIndex + ordersPerPage;
-    return filteredOrders.slice(startIndex, endIndex);
-  }, [filteredOrders, currentPage]);
+    const start = (currentPage - 1) * ordersPerPage;
+    return sortedAndFilteredOrders.slice(start, start + ordersPerPage);
+  }, [sortedAndFilteredOrders, currentPage]);
 
-  // customers shown in select — filtered and sorted newest-first
   const filteredCustomers = useMemo(() => {
-    const cf = customerFilter?.toLowerCase() || "";
+    const cf = (customerFilter || "").toLowerCase();
     const list = (customers || []).filter((c) => {
       if (!cf) return true;
       return (c.name || "").toLowerCase().startsWith(cf);
     });
-    // already sorted in fetchCustomers, but ensure newest-first anyway
-    list.sort((a, b) => {
-      const ta = new Date(a.createdAt || a.updatedAt || 0).getTime();
-      const tb = new Date(b.createdAt || b.updatedAt || 0).getTime();
-      return tb - ta;
-    });
-    return list;
+    return sortNewestFirst(list);
   }, [customers, customerFilter]);
+
+  const getSortIndicator = (key) => {
+    if (sortConfig.key !== key) {
+      return (
+        <SortIcon className="inline-block w-4 h-4 ml-1 text-gray-400" />
+      );
+    }
+    if (sortConfig.direction === "ascending") {
+      return (
+        <svg
+          className="inline-block w-4 h-4 ml-1"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <path d="m18 15-6-6-6 6" />
+        </svg>
+      );
+    }
+    return (
+      <svg
+        className="inline-block w-4 h-4 ml-1"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      >
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    );
+  };
 
   if (status === "loading") {
     return (
@@ -269,7 +438,6 @@ export default function OrdersPage() {
         </div>
         <Separator className="my-6" />
         <div className="flex space-x-2 mb-4">
-          <Skeleton className="h-8 w-[200px]" />
           <Skeleton className="h-8 w-[200px]" />
         </div>
         <div className="space-y-2">
@@ -294,11 +462,11 @@ export default function OrdersPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      {/* Toaster renders Sonner toasts. Move to root layout if you want global toasts */}
       <Toaster position="top-right" />
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Orders</h1>
+
         <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
           <DialogTrigger asChild>
             <Button>+ Add New Order</Button>
@@ -306,43 +474,51 @@ export default function OrdersPage() {
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Add Order</DialogTitle>
-              <DialogDescription>Fill in the details to add a new order.</DialogDescription>
+              <DialogDescription>
+                Fill in the details to add a new order.
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleAddOrder} className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="customer" className="text-right">
                   Customer
                 </Label>
-                <Select
-                  onValueChange={(value) => setNewOrder((prev) => ({ ...prev, customerId: value }))}
-                  required
-                >
-                  <SelectTrigger className="col-span-3">
-                    <SelectValue placeholder="Select a customer" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectLabel>Customers</SelectLabel>
-                      <div className="px-3 pb-2">
-                        <Input
-                          placeholder="Type a letter (e.g. 'a') to filter..."
-                          value={customerFilter}
-                          onChange={(e) => setCustomerFilter(e.target.value)}
-                          autoFocus
-                        />
-                      </div>
-                      {filteredCustomers.length > 0 ? (
-                        filteredCustomers.map((c) => (
-                          <SelectItem key={c._id} value={c._id}>
-                            {c.name} ({c.email})
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <div className="px-3 py-2 text-sm text-gray-500">No customers</div>
-                      )}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                <div className="col-span-3">
+                  <Select
+                    onValueChange={(value) =>
+                      setNewOrder((p) => ({ ...p, customerId: value }))
+                    }
+                    required
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select a customer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectLabel>Customers</SelectLabel>
+                        <div className="px-3 pb-2">
+                          <Input
+                            placeholder="Type a letter to filter..."
+                            value={customerFilter}
+                            onChange={(e) => setCustomerFilter(e.target.value)}
+                            autoFocus
+                          />
+                        </div>
+                        {filteredCustomers.length > 0 ? (
+                          filteredCustomers.map((c) => (
+                            <SelectItem key={c._id} value={c._id}>
+                              {c.name} ({c.email})
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <div className="px-3 py-2 text-sm text-gray-500">
+                            No customers
+                          </div>
+                        )}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="grid grid-cols-4 items-center gap-4">
@@ -360,9 +536,18 @@ export default function OrdersPage() {
                 />
               </div>
 
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Saving..." : "Save Order"}
-              </Button>
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setIsModalOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Saving..." : "Save Order"}
+                </Button>
+              </div>
             </form>
           </DialogContent>
         </Dialog>
@@ -374,30 +559,14 @@ export default function OrdersPage() {
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="outline" className="w-full md:w-auto">
-              Filter by Customer
+              Filter by Customer or Email
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-64">
             <Input
-              placeholder="Filter customer name..."
-              name="customerName"
-              value={filters.customerName}
-              onChange={handleFilterChange}
-            />
-          </PopoverContent>
-        </Popover>
-
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className="w-full md:w-auto">
-              Filter by Status
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-64">
-            <Input
-              placeholder="Filter status..."
-              name="status"
-              value={filters.status}
+              placeholder="Filter by name or email..."
+              name="searchTerm"
+              value={filters.searchTerm}
               onChange={handleFilterChange}
             />
           </PopoverContent>
@@ -415,21 +584,43 @@ export default function OrdersPage() {
           <Table>
             <TableHeader>
               <TableRow className="bg-gray-100 dark:bg-gray-800">
-                <TableHead>Customer</TableHead>
-                <TableHead>Amount</TableHead>
+                <TableHead
+                  className="cursor-pointer"
+                  onClick={() => requestSort("customer")}
+                >
+                  Customer {getSortIndicator("customer")}
+                </TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead
+                  className="cursor-pointer"
+                  onClick={() => requestSort("amount")}
+                >
+                  Amount {getSortIndicator("amount")}
+                </TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Date</TableHead>
+                <TableHead
+                  className="cursor-pointer"
+                  onClick={() => requestSort("date")}
+                >
+                  Date {getSortIndicator("date")}
+                </TableHead>
                 <TableHead>Time</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {currentOrders.map((o) => {
-                const ts = new Date(o.createdAt || o.updatedAt || Date.now());
+                const ts = new Date(
+                  o.createdAt || o.updatedAt || idToTimestampMs(o._id) || Date.now()
+                );
                 const dateStr = ts.toLocaleDateString();
                 const timeStr = ts.toLocaleTimeString();
                 return (
                   <TableRow key={o._id}>
-                    <TableCell className="font-medium">{o.customer?.name || "Unknown"}</TableCell>
+                    <TableCell className="font-medium">
+                      {o.customer?.name || "Unknown"}
+                    </TableCell>
+                    <TableCell>{o.customer?.email || "N/A"}</TableCell>
                     <TableCell>₹{o.amount}</TableCell>
                     <TableCell>
                       <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
@@ -438,6 +629,41 @@ export default function OrdersPage() {
                     </TableCell>
                     <TableCell>{dateStr}</TableCell>
                     <TableCell>{timeStr}</TableCell>
+                    <TableCell>
+                      <div className="flex justify-end">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" className="h-8 w-8 p-0">
+                              <span className="sr-only">Open menu</span>
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="w-4 h-4"
+                              >
+                                <circle cx="12" cy="12" r="1" />
+                                <circle cx="19" cy="12" r="1" />
+                                <circle cx="5" cy="12" r="1" />
+                              </svg>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setConfirmDeleteId(o._id);
+                                setIsConfirmDeleteOpen(true);
+                              }}
+                            >
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 );
               })}
@@ -452,9 +678,11 @@ export default function OrdersPage() {
                     href="#"
                     onClick={(e) => {
                       e.preventDefault();
-                      setCurrentPage((prev) => Math.max(prev - 1, 1));
+                      setCurrentPage((p) => Math.max(p - 1, 1));
                     }}
-                    className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
+                    className={
+                      currentPage === 1 ? "pointer-events-none opacity-50" : ""
+                    }
                   />
                 </PaginationItem>
 
@@ -478,9 +706,13 @@ export default function OrdersPage() {
                     href="#"
                     onClick={(e) => {
                       e.preventDefault();
-                      setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+                      setCurrentPage((p) => Math.min(p + 1, totalPages));
                     }}
-                    className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""}
+                    className={
+                      currentPage === totalPages
+                        ? "pointer-events-none opacity-50"
+                        : ""
+                    }
                   />
                 </PaginationItem>
               </PaginationContent>
@@ -492,6 +724,34 @@ export default function OrdersPage() {
           No orders found. Add a new order to get started.
         </div>
       )}
+
+      <AlertDialog
+        open={isConfirmDeleteOpen}
+        onOpenChange={setIsConfirmDeleteOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+          </AlertDialogHeader>
+          <div className="p-4 text-sm text-muted-foreground">
+            This action cannot be undone. This will permanently delete the
+            order.
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setIsConfirmDeleteOpen(false);
+                setConfirmDeleteId(null);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} disabled={isDeleting}>
+              {isDeleting ? "Deleting..." : "Continue"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
