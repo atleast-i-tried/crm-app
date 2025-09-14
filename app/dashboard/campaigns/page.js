@@ -2,7 +2,14 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useSession } from "next-auth/react";
+
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
+
+import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -10,13 +17,6 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,7 +27,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
+
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { X, EllipsisVertical } from "lucide-react";
 import {
   DropdownMenu,
@@ -45,7 +48,7 @@ export default function CampaignsPage() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Create-campaign state (form is visible inline now)
+  // Create-campaign state
   const [newCampaign, setNewCampaign] = useState({
     name: "",
     message: "",
@@ -59,12 +62,15 @@ export default function CampaignsPage() {
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [aiLoading, setAiLoading] = useState(false);
 
-  // Details dialog for recent campaigns (opens when user clicks a recent campaign)
+  // Details dialog for recent campaigns
   const [selectedCampaign, setSelectedCampaign] = useState(null);
 
   // Delete confirmation
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+
+  // Drawer toggle for recent campaigns (hidden by default)
+  const [recentOpen, setRecentOpen] = useState(false);
 
   const filterOptions = [
     { label: "Min. Spend", key: "minSpend" },
@@ -120,6 +126,7 @@ export default function CampaignsPage() {
     setNewCampaign({ ...newCampaign, filters: updated });
   };
 
+  // Fetch all data
   const fetchAllData = async () => {
     try {
       setLoading(true);
@@ -191,7 +198,6 @@ export default function CampaignsPage() {
       }
 
       await fetchAllData();
-      // clear form but keep logic default
       setNewCampaign({
         name: "",
         message: "",
@@ -236,7 +242,7 @@ export default function CampaignsPage() {
     }
   };
 
-  // Normalize any API result into an array of strings
+  // Normalize AI result into array
   const normalizeSuggestions = (raw) => {
     if (!raw && raw !== "") return [];
     if (Array.isArray(raw)) {
@@ -339,24 +345,22 @@ export default function CampaignsPage() {
     return [...(campaignStats || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 3);
   }, [campaignStats]);
 
-  // NEW: panel open state for recent campaigns (hidden by default)
-  const [recentOpen, setRecentOpen] = useState(false);
-
+  // Loading / auth UI
   if (status === "loading") {
     return (
       <div className="p-6 max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-6">
-          <Skeleton className="h-10 w-60" />
-          <Skeleton className="h-10 w-40" />
+        <div className="flex justify-between items-center mb-3">
+          <Skeleton className="h-10 w-52" />
+          <Skeleton className="h-10 w-36" />
         </div>
-        <Separator className="my-6" />
+        <Separator className="my-3" />
         <div className="grid grid-cols-3 gap-6">
-          <div className="col-span-2 space-y-4">
+          <div className="col-span-2 space-y-3">
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
           </div>
-          <div className="space-y-4">
+          <div className="space-y-3">
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
@@ -377,128 +381,169 @@ export default function CampaignsPage() {
     );
   }
 
+  // Main UI
   return (
     <div className="p-6 max-w-7xl mx-auto relative">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-start justify-between mb-2 gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Create Campaign</h1>
-          <div className="text-sm text-gray-500 mt-1">Design your audience, craft the message, and launch.</div>
+          <h1 className="text-3xl font-extrabold tracking-tight leading-tight">Create Campaign</h1>
+          <div className="text-sm text-gray-500 mt-0.5">Design your audience, craft the message, and launch.</div>
         </div>
-        <div className="hidden sm:flex items-center gap-4">
-          <Button variant="ghost" onClick={() => { setRecentOpen((v) => !v); }}>
-            <EllipsisVertical className="mr-2 h-4 w-4" />
-            <span className="hidden sm:inline">Recent</span>
+
+        {/* TOP-RIGHT: enlarged Recent Campaigns button (bigger, clearer) */}
+        <div className="ml-4">
+          <Button
+            size="lg"
+            className="flex items-center gap-3 px-4 py-2 rounded-md shadow-sm"
+            onClick={() => setRecentOpen((v) => !v)}
+            aria-expanded={recentOpen}
+            aria-controls="recent-campaigns-drawer"
+          >
+            <EllipsisVertical className="h-5 w-5" />
+            <span className="font-medium">Recent Campaigns</span>
           </Button>
         </div>
       </div>
 
-      <Separator className="my-6" />
+      <Separator className="my-4" />
 
-      {/* Main layout: left = create form */}
+      {/* FORM CARD (tighter spacing, stronger borders) */}
       <div className="grid grid-cols-1 gap-6">
-        {/* Left: Create Campaign (visible inline, replaces dialog) */}
-        <div className="lg:col-span-2">
-          <form onSubmit={handleAddCampaign} className="space-y-6 bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-xl transition-shadow">
-            {/* Name */}
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="name" className="text-right">
-                Name
-              </Label>
-              <Input id="name" name="name" value={newCampaign.name} onChange={handleInputChange} required className="col-span-3" />
-            </div>
+        <Card className="rounded-2xl shadow-lg border border-gray-300 dark:border-gray-700 overflow-visible">
+          <CardHeader className="px-4 py-0 border-b border-gray-300 dark:border-gray-700">
+            <CardTitle className="text-base font-semibold">New Campaign</CardTitle>
+          </CardHeader>
 
-            {/* Audience Filters */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-gray-500">Audience Filters</h4>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">Logic:</span>
-                  <Button type="button" variant={newCampaign.logic === "AND" ? "default" : "outline"} onClick={() => handleLogicChange("AND")} size="sm">
-                    AND
-                  </Button>
-                  <Button type="button" variant={newCampaign.logic === "OR" ? "default" : "outline"} onClick={() => handleLogicChange("OR")} size="sm">
-                    OR
-                  </Button>
+          <CardContent className="p-4">
+            <form onSubmit={handleAddCampaign} className="space-y-3">
+              {/* NAME: label above input with minimal gap */}
+              <div>
+                <Label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
+                  Name
+                </Label>
+                <Input
+                  id="name"
+                  name="name"
+                  value={newCampaign.name}
+                  onChange={handleInputChange}
+                  required
+                  className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 py-2 placeholder-gray-400"
+                  placeholder="Campaign name (e.g., Spring Re-Engage)"
+                />
+              </div>
+
+              {/* Audience Filters (compact panel) */}
+              <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-semibold text-gray-600">Audience Filters</h4>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">Logic:</span>
+                    <Button type="button" variant={newCampaign.logic === "AND" ? "default" : "outline"} onClick={() => handleLogicChange("AND")} size="sm">
+                      AND
+                    </Button>
+                    <Button type="button" variant={newCampaign.logic === "OR" ? "default" : "outline"} onClick={() => handleLogicChange("OR")} size="sm">
+                      OR
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {newCampaign.filters.map((filter, index) => (
+                    <div key={index} className="flex gap-2 items-center">
+                      <select
+                        value={filter.key}
+                        onChange={(e) => handleFilterChange(index, e.target.value, filter.value)}
+                        className="min-w-[140px] rounded-md border border-gray-300 bg-white px-2 py-2 text-sm focus:ring-2 focus:ring-indigo-50"
+                      >
+                        {filterOptions.map((option) => (
+                          <option key={option.key} value={option.key}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+
+                      <Input
+                        type="number"
+                        value={filter.value}
+                        onChange={(e) => handleFilterChange(index, filter.key, Number(e.target.value))}
+                        className="flex-1 rounded-md border border-gray-300 py-2"
+                      />
+
+                      <Button type="button" variant="destructive" size="icon" onClick={() => handleRemoveFilter(index)}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+
+                  <div className="flex justify-center">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="px-4 py-1 shadow-sm hover:shadow-md transition"
+                      onClick={handleAddFilter}
+                      disabled={newCampaign.filters.length >= 3}
+                    >
+                      + Add Filter
+                    </Button>
+                  </div>
+
+
+                  <div className="text-center text-sm font-medium mt-2">
+                    Audience Size: <Badge variant="secondary">{audienceSize}</Badge>
+                  </div>
                 </div>
               </div>
 
-              {newCampaign.filters.map((filter, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <select
-                    value={filter.key}
-                    onChange={(e) => handleFilterChange(index, e.target.value, filter.value)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    {filterOptions.map((option) => (
-                      <option key={option.key} value={option.key}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <Input
-                    type="number"
-                    value={filter.value}
-                    onChange={(e) => handleFilterChange(index, filter.key, Number(e.target.value))}
-                    className="w-full"
-                  />
-                  <Button type="button" variant="destructive" size="icon" onClick={() => handleRemoveFilter(index)}>
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
+              <Separator />
 
-              <Button type="button" variant="outline" className="w-full" onClick={handleAddFilter} disabled={newCampaign.filters.length >= 3}>
-                + Add Filter
-              </Button>
-
-              <div className="text-center text-sm font-medium mt-2">
-                Audience Size: <Badge variant="secondary">{audienceSize}</Badge>
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* AI Assistant */}
-            <div className="space-y-4">
-              <h4 className="text-sm font-semibold text-gray-500">AI Message Suggestions</h4>
-
-              <Card className="shadow-md">
-                <CardHeader>
-                  <CardTitle>AI Message Assistant</CardTitle>
+              {/* AI Assistant card (compact) */}
+              <Card className="shadow-md border border-gray-300 dark:border-gray-700">
+                <CardHeader className="px-4 py-2">
+                  <CardTitle className="text-md font-semibold">AI Message Assistant</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex gap-2 items-end">
-                    <div className="flex-1 space-y-2">
-                      <Label htmlFor="objective">Campaign Objective</Label>
+
+                <CardContent className="p-3 space-y-3">
+                  <div className="flex gap-3 items-end">
+                    <div className="flex-1">
+                      <Label htmlFor="objective" className="text-sm text-gray-600 mb-1">
+                        Campaign Objective
+                      </Label>
                       <Input
                         id="objective"
                         name="objective"
                         placeholder="e.g., 'bring back inactive users'"
                         value={newCampaign.objective}
                         onChange={handleInputChange}
+                        className="rounded-md border border-gray-300 py-2 bg-white dark:bg-gray-800"
                       />
                     </div>
-                    <Button type="button" onClick={getAiSuggestions} disabled={aiLoading}>
-                      {aiLoading ? "Generating..." : "Generate AI Messages"}
-                    </Button>
+
+                    <div>
+                      <Button type="button" onClick={getAiSuggestions} disabled={aiLoading}>
+                        {aiLoading ? "Generating..." : "Generate"}
+                      </Button>
+                    </div>
                   </div>
 
                   {aiSuggestions && aiSuggestions.length > 0 && (
-                    <div className="space-y-2">
+                    <div className="grid gap-2">
                       {aiSuggestions.map((suggestion, index) => (
-                        <div
+                        <button
                           key={index}
-                          className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition"
+                          type="button"
+                          className="text-left p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 transition text-sm"
                           onClick={() => setNewCampaign({ ...newCampaign, message: suggestion })}
                         >
-                          <p className="text-sm">{suggestion}</p>
-                        </div>
+                          {suggestion}
+                        </button>
                       ))}
                     </div>
                   )}
 
-                  <div className="space-y-2">
-                    <Label htmlFor="message">Final Message</Label>
+                  <div>
+                    <Label htmlFor="message" className="text-sm text-gray-600 mb-1">
+                      Final Message
+                    </Label>
                     <Textarea
                       id="message"
                       name="message"
@@ -506,40 +551,31 @@ export default function CampaignsPage() {
                       onChange={handleInputChange}
                       required
                       placeholder="Enter your campaign message here..."
+                      className="rounded-md border border-gray-300 py-2 bg-white dark:bg-gray-800"
+                      rows={4}
                     />
                   </div>
                 </CardContent>
               </Card>
-            </div>
 
-            <Button type="submit" className="w-full">
-              Launch Campaign
-            </Button>
-          </form>
-        </div>
+              <div>
+                <Button type="submit" className="w-full py-3 rounded-md shadow-sm">
+                  Launch Campaign
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Floating toggle button on the right (visible on all sizes) */}
-      <div className="fixed right-6 bottom-8 z-50">
-        <button
-          onClick={() => setRecentOpen((v) => !v)}
-          aria-expanded={recentOpen}
-          aria-controls="recent-campaigns-drawer"
-          className="flex items-center gap-2 px-4 py-2 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-100 dark:border-gray-700 hover:shadow-2xl transition"
-        >
-          <EllipsisVertical className="h-4 w-4" />
-          <span className="hidden sm:inline text-sm font-medium">Recent campaigns</span>
-        </button>
-      </div>
-
-      {/* Drawer: recent campaigns panel (slides in from right) */}
+      {/* RECENT CAMPAIGNS DRAWER (slides in from right) */}
       <AnimatePresence>
         {recentOpen && (
           <>
             {/* backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
-              animate={{ opacity: 0.35 }}
+              animate={{ opacity: 0.28 }}
               exit={{ opacity: 0 }}
               onClick={() => setRecentOpen(false)}
               className="fixed inset-0 z-40 bg-black"
@@ -547,13 +583,13 @@ export default function CampaignsPage() {
 
             <motion.aside
               id="recent-campaigns-drawer"
-              initial={{ x: 400 }}
+              initial={{ x: 384 }}
               animate={{ x: 0 }}
-              exit={{ x: 400 }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="fixed right-0 top-0 z-50 h-full w-[28rem] max-w-full bg-white dark:bg-gray-900 shadow-2xl p-6 overflow-y-auto"
+              exit={{ x: 384 }}
+              transition={{ type: "spring", stiffness: 320, damping: 30 }}
+              className="fixed right-0 top-0 z-50 h-full w-96 max-w-full bg-white dark:bg-gray-900 shadow-2xl p-6 overflow-y-auto"
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold">Recent Campaigns</h2>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-500">Latest 3</span>
@@ -563,7 +599,7 @@ export default function CampaignsPage() {
                 </div>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {loading ? (
                   <>
                     <Skeleton className="h-20 w-full" />
@@ -577,13 +613,13 @@ export default function CampaignsPage() {
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 8 }}
-                      transition={{ duration: 0.18 }}
+                      transition={{ duration: 0.12 }}
                     >
-                      <Card className="shadow-sm">
-                        <CardContent className="p-4 flex items-start gap-3">
+                      <Card className="shadow-md border border-gray-900 dark:border-gray-700">
+                        <CardContent className="p-3 flex items-start gap-3">
                           <div className="flex-1">
                             <div className="flex items-center justify-between">
-                              <h3 className="text-sm font-medium">{c.name}</h3>
+                              <h3 className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{c.name}</h3>
                               <div onClick={(e) => e.stopPropagation()}>
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
@@ -606,14 +642,12 @@ export default function CampaignsPage() {
                               </div>
                             </div>
 
-                            <div className="mt-3 flex items-center gap-2">
-                              <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">
-                                {c.successRate}% success
-                              </Badge>
+                            <div className="mt-2 flex items-center gap-2">
+                              <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">{c.successRate}% success</Badge>
                               <Badge className="bg-red-50 text-red-700 dark:bg-red-800 dark:text-red-200">{c.failedRate}% failed</Badge>
                               <span className="text-xs text-gray-400 ml-auto">{new Date(c.createdAt).toLocaleDateString()}</span>
                             </div>
-                            <div className="mt-3">
+                            <div className="mt-2">
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -676,8 +710,8 @@ export default function CampaignsPage() {
               <DialogDescription>Details for this campaign.</DialogDescription>
             </DialogHeader>
 
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-2 items-center gap-4">
+            <div className="grid gap-3 py-3">
+              <div className="grid grid-cols-2 items-center gap-3">
                 <p className="text-sm font-medium">Created By:</p>
                 <p className="text-sm text-gray-500">{selectedCampaign.createdBy}</p>
               </div>
@@ -685,9 +719,7 @@ export default function CampaignsPage() {
               <Separator />
 
               <div className="space-y-2">
-                <p className="text-sm font-medium">
-                  Filters ({selectedCampaign.logic || "AND"}):
-                </p>
+                <p className="text-sm font-medium">Filters ({selectedCampaign.logic || "AND"}):</p>
                 {selectedCampaign.filters && selectedCampaign.filters.length > 0 ? (
                   <ul className="list-disc list-inside space-y-1 text-sm text-gray-500">
                     {selectedCampaign.filters.map((filter, index) => (
@@ -712,7 +744,7 @@ export default function CampaignsPage() {
 
               <Separator />
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <p className="text-xs text-gray-400">Audience</p>
                   <div className="text-sm font-medium">{selectedCampaign.audienceSize || 0}</div>
@@ -720,9 +752,7 @@ export default function CampaignsPage() {
                 <div>
                   <p className="text-xs text-gray-400">Sent / Failed</p>
                   <div className="flex items-center gap-2">
-                    <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">
-                      {selectedCampaign.sent || 0} sent
-                    </Badge>
+                    <Badge className="bg-green-50 text-green-700 dark:bg-green-800 dark:text-green-200">{selectedCampaign.sent || 0} sent</Badge>
                     <Badge className="bg-red-50 text-red-700 dark:bg-red-800 dark:text-red-200">{selectedCampaign.failed || 0} failed</Badge>
                   </div>
                 </div>

@@ -11,7 +11,7 @@ export async function POST(req) {
 
         ✅ Each message must:
 
-        Be under 50 words.
+        Be under 100 words.
 
         Sound natural, engaging, and persuasive (not robotic).
 
@@ -20,6 +20,8 @@ export async function POST(req) {
         Vary the style: one urgent, one warm & personal, one value-driven.
 
         Avoid jargon, technical words, or sounding too salesy.
+
+        Include numbers like discounts, or timeframes where relevant.
 
         Return the results as a numbered list, with each message on a separate line.
     `;
