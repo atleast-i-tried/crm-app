@@ -1,5 +1,4 @@
-
-
+// app/layout.js
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "next-themes";
@@ -15,17 +14,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "XenoCRM",
+  title: "EngageCRM",
   description: "Mini CRM with AI campaigns",
+  icons: {
+    icon: "/favicon.ico", // path to your favicon in public
+  },
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {/* ✅ Theme Provider Wrap */}
+      <head>
+        <link rel="icon" href="/favicon.ico" />
+      </head>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
           {children}
         </ThemeProvider>
