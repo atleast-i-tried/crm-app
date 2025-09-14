@@ -30,7 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import { toast, Toaster } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -64,7 +64,7 @@ export default function OrdersPage() {
   });
   const [currentPage, setCurrentPage] = useState(1);
   const [customerFilter, setCustomerFilter] = useState("");
-  const ordersPerPage = 15;
+  const ordersPerPage = 11;
 
   // refs for customer diffing and to prevent toasts on initial load
   const prevCustomersRef = useRef([]);
@@ -99,7 +99,6 @@ export default function OrdersPage() {
         added.push(c);
       } else {
         // simple deep compare for relevant fields (name, email, updatedAt)
-        // If your customer object uses other fields to detect edits, include them.
         const prevStr = JSON.stringify({
           name: prev.name,
           email: prev.email,
@@ -295,6 +294,9 @@ export default function OrdersPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* Toaster renders Sonner toasts. Move to root layout if you want global toasts */}
+      <Toaster position="top-right" />
+
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Orders</h1>
         <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
@@ -417,23 +419,28 @@ export default function OrdersPage() {
                 <TableHead>Amount</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Date</TableHead>
+                <TableHead>Time</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {currentOrders.map((o) => (
-                <TableRow key={o._id}>
-                  <TableCell className="font-medium">
-                    {o.customer?.name || "Unknown"}
-                  </TableCell>
-                  <TableCell>₹{o.amount}</TableCell>
-                  <TableCell>
-                    <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
-                      {o.status || "N/A"}
-                    </span>
-                  </TableCell>
-                  <TableCell>{new Date(o.createdAt || o.updatedAt || Date.now()).toLocaleString()}</TableCell>
-                </TableRow>
-              ))}
+              {currentOrders.map((o) => {
+                const ts = new Date(o.createdAt || o.updatedAt || Date.now());
+                const dateStr = ts.toLocaleDateString();
+                const timeStr = ts.toLocaleTimeString();
+                return (
+                  <TableRow key={o._id}>
+                    <TableCell className="font-medium">{o.customer?.name || "Unknown"}</TableCell>
+                    <TableCell>₹{o.amount}</TableCell>
+                    <TableCell>
+                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                        {o.status || "N/A"}
+                      </span>
+                    </TableCell>
+                    <TableCell>{dateStr}</TableCell>
+                    <TableCell>{timeStr}</TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
 

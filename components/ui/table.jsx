@@ -9,11 +9,27 @@ function Table({
   ...props
 }) {
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    <div
+      data-slot="table-container"
+      className={cn(
+        // container: rounded card, subtle border & overflow handling
+        "relative w-full overflow-x-auto rounded-2xl border bg-card shadow-sm",
+        // allow a slightly elevated look on wide screens, keep compact on small
+        "sm:shadow-md",
+        className
+      )}
+    >
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
-        {...props} />
+        // table reset + min width so columns don't collapse, better default typography
+        className={cn(
+          "min-w-full table-auto text-sm leading-6 text-foreground",
+          "caption-bottom",
+          "border-transparent",
+          className
+        )}
+        {...props}
+      />
     </div>
   );
 }
@@ -25,8 +41,15 @@ function TableHeader({
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
-      {...props} />
+      // sticky header for long scrollable tables; subtle backdrop to avoid bleed-through
+      className={cn(
+        "[&_tr]:border-b",
+        "sticky top-0 z-20",
+        "backdrop-blur-sm bg-background/90 dark:bg-background/90",
+        className
+      )}
+      {...props}
+    />
   );
 }
 
@@ -37,8 +60,10 @@ function TableBody({
   return (
     <tbody
       data-slot="table-body"
-      className={cn("[&_tr:last-child]:border-0", className)}
-      {...props} />
+      // keep last-row border off and smooth row transitions
+      className={cn("[&_tr:last-child]:border-0", "divide-y", className)}
+      {...props}
+    />
   );
 }
 
@@ -49,8 +74,13 @@ function TableFooter({
   return (
     <tfoot
       data-slot="table-footer"
-      className={cn("bg-muted/50 border-t font-medium [&>tr]:last:border-b-0", className)}
-      {...props} />
+      className={cn(
+        // slightly muted band with strong separator
+        "bg-muted/50 border-t font-medium [&>tr]:last:border-b-0",
+        className
+      )}
+      {...props}
+    />
   );
 }
 
@@ -62,10 +92,16 @@ function TableRow({
     <tr
       data-slot="table-row"
       className={cn(
-        "hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors",
+        // zebra striping + hover + subtle lift when hovered
+        "transition-colors duration-150",
+        "odd:bg-transparent even:bg-muted/5 dark:even:bg-muted/10",
+        "hover:bg-muted/40 dark:hover:bg-muted/30",
+        // keep original border behaviour
+        "data-[state=selected]:bg-muted border-b",
         className
       )}
-      {...props} />
+      {...props}
+    />
   );
 }
 
@@ -77,10 +113,15 @@ function TableHead({
     <th
       data-slot="table-head"
       className={cn(
-        "text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        // slightly larger, uppercase label feel for headings, good spacing
+        "text-foreground h-12 px-4 text-left align-middle font-medium whitespace-nowrap",
+        "text-xs uppercase tracking-wide select-none",
+        // preserve existing checkbox alignment helper
+        "[&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className
       )}
-      {...props} />
+      {...props}
+    />
   );
 }
 
@@ -92,10 +133,15 @@ function TableCell({
     <td
       data-slot="table-cell"
       className={cn(
-        "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        // more comfortable touch target + truncation for long values
+        "py-3 px-4 align-middle whitespace-nowrap text-sm",
+        "max-w-[18rem] truncate",
+        // preserve checkbox helpers
+        "[&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className
       )}
-      {...props} />
+      {...props}
+    />
   );
 }
 
@@ -106,8 +152,13 @@ function TableCaption({
   return (
     <caption
       data-slot="table-caption"
-      className={cn("text-muted-foreground mt-4 text-sm", className)}
-      {...props} />
+      className={cn(
+        // centered, small and slightly muted with spacing
+        "text-muted-foreground mt-4 text-sm text-center",
+        className
+      )}
+      {...props}
+    />
   );
 }
 
