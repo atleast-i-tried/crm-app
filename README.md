@@ -1,36 +1,234 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# EngageCRM 📩
 
-## Getting Started
+EngageCRM is a scalable customer engagement platform built for marketing and communication teams. It provides powerful campaign management, intelligent customer segmentation, and background delivery pipelines (via RabbitMQ) to ensure reliable message delivery at scale.
 
-First, run the development server:
+---
+
+##  Features
+
+* **Campaign Management** – Create, queue, and track campaigns with filters and logic (AND/OR).
+* **Customer Segmentation** – Filter customers by spend, visits, or inactivity.
+* **Background Processing** – Asynchronous delivery using RabbitMQ + worker processes.
+* **Vendor Integration** – Unified API layer to send SMS/WhatsApp/Email via third-party vendors.
+* **Logs & Analytics** – Track campaign delivery, success, and failures.
+* **Authentication** – Secure routes with NextAuth (Google OAuth, Credentials).
+* **Scalable Architecture** – Decoupled ingestion/delivery flows for high throughput.
+
+---
+
+##  Architecture
+
+```
+Next.js (App Router)
+│
+├── API Routes (/api)
+│    ├── campaigns        → Create & list campaigns
+│    ├── customers        → CRUD customers
+│    ├── vendor/send      → Forward to vendor APIs (SMS/WhatsApp)
+│    ├── logs             → Fetch campaign logs
+│    └── auth/[...nextauth] → Authentication (NextAuth)
+│
+├── MongoDB              → Stores campaigns, customers, logs
+├── RabbitMQ             → Message broker for async processing
+└── Worker (Node.js)     → Consumes jobs, applies filters, calls vendor APIs
+```
+
+---
+
+##  Project Structure
+
+```
+engageCRM/
+├── app/
+│   ├── api/             # API routes
+│   │   ├── campaigns/
+│   │   ├── customers/
+│   │   ├── logs/
+│   │   └── vendor/
+│   ├── dashboard/       # Frontend UI
+│   └── auth/            # Authentication pages
+├── lib/                 # Database + RabbitMQ helpers
+├── models/              # Mongoose models
+├── workers/             # Background workers
+├── public/              # Static assets
+└── README.md
+```
+
+---
+
+## ⚙ Backend Routes
+
+### Campaigns
+
+* `GET /api/campaigns` → List all campaigns.
+* `POST /api/campaigns` → Create campaign, publish job to RabbitMQ.
+
+  ```json
+  {
+    "name": "Loyalty Push",
+    "message": "Thanks for shopping!",
+    "filters": [ { "key": "minSpend", "value": 500 } ],
+    "logic": "AND",
+    "createdBy": "admin@example.com"
+  }
+  ```
+
+  Response:
+
+  ```json
+  {
+    "campaign": { ... },
+    "matchedCustomers": 120,
+    "queued": true
+  }
+  ```
+
+### Customers
+
+* `GET /api/customers` → List customers.
+* `POST /api/customers` → Add new customer.
+* `PUT /api/customers/:id` → Update customer.
+* `DELETE /api/customers/:id` → Delete customer.
+
+### Logs
+
+* `GET /api/logs?campaignId=123` → Fetch campaign logs with statuses.
+
+### Vendor API
+
+* `POST /api/vendor/send` → Proxy to vendor integrations.
+
+  ```json
+  {
+    "to": "+9199999999",
+    "message": "Hello",
+    "channel": "whatsapp"
+  }
+  ```
+
+### Authentication
+
+* `GET /api/auth/[...nextauth]` → Google OAuth + Credentials login.
+
+---
+
+##  Frontend Routes (Dashboard)
+
+* `/dashboard`
+
+  * Overview of campaigns & customers.
+* `/dashboard/campaigns`
+
+  * List campaigns with stats & logs.
+  * Create new campaigns.
+* `/dashboard/customers`
+
+  * Manage customer list (add/edit/delete).
+* `/dashboard/logs`
+
+  * View per-campaign logs.
+
+---
+
+## 🛠 Worker (Background Processor)
+
+* Consumes messages from `campaignQueue`.
+* Applies filters and logic to fetch matching customers.
+* Sends messages via `/api/vendor/send`.
+* Logs results in `CampaignLog` collection.
+
+Run worker:
+
+```bash
+node workers/campaignWorker.js
+```
+
+---
+
+##  Models
+
+### Customer
+
+```ts
+{
+  name: String,
+  phone: String,
+  totalSpend: Number,
+  visits: Number,
+  lastActive: Date
+}
+```
+
+### Campaign
+
+```ts
+{
+  name: String,
+  message: String,
+  filters: Array,
+  logic: "AND" | "OR",
+  createdBy: String,
+  createdAt: Date
+}
+```
+
+### CampaignLog
+
+```ts
+{
+  campaignId: ObjectId,
+  customerId: ObjectId,
+  status: "SENT" | "FAILED",
+  error?: String,
+  timestamp: Date
+}
+```
+
+---
+
+##  Setup & Run
+
+### Prerequisites
+
+* Node.js 18+
+* MongoDB (local or Atlas)
+* RabbitMQ (local or CloudAMQP)
+
+### Installation
+
+```bash
+git clone https://github.com/your-org/engageCRM.git
+cd engageCRM
+npm install
+```
+
+### Environment Variables (`.env.local`)
+
+```
+MONGODB_URI=mongodb://localhost:27017/engagecrm
+RABBITMQ_URL=amqp://localhost
+NEXTAUTH_SECRET=your-secret
+GOOGLE_CLIENT_ID=xxx
+GOOGLE_CLIENT_SECRET=yyy
+```
+
+### Run Dev Server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Frontend: [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+### Start Worker
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+node workers/campaignWorker.js
+```
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
