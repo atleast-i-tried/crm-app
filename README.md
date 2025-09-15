@@ -1,4 +1,4 @@
-# EngageCRM 📩
+# EngageCRM 
 
 EngageCRM is a scalable customer engagement platform built for marketing and communication teams. It provides powerful campaign management, intelligent customer segmentation, and background delivery pipelines (via RabbitMQ) to ensure reliable message delivery at scale.
 
